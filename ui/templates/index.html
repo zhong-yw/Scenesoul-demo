@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>白界 · Scenesoul 虚拟生命</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+            background: #0a0a1a;
+            color: #e0e0e0;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        
+        /* 顶部标题 */
+        .header {
+            background: linear-gradient(135deg, #1a1a3e 0%, #0d0d2b 100%);
+            padding: 16px 24px;
+            border-bottom: 1px solid #2a2a5a;
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            flex-shrink: 0;
+        }
+        .header h1 {
+            font-size: 20px;
+            font-weight: 600;
+            background: linear-gradient(90deg, #a78bfa, #60a5fa);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .header .status-dot {
+            width: 10px; height: 10px;
+            border-radius: 50%;
+            background: #4ade80;
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        .header .scene-name {
+            background: #2a2a5a;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 13px;
+            color: #a78bfa;
+        }
+        
+        /* 主体 */
+        .main {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+        }
+        
+        /* 左侧 - 聊天区 */
+        .chat-area {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            border-right: 1px solid #1e1e3e;
+        }
+        .messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        .messages::-webkit-scrollbar { width: 4px; }
+        .messages::-webkit-scrollbar-thumb { background: #3a3a6a; border-radius: 2px; }
+        
+        .msg {
+            max-width: 85%;
+            padding: 12px 16px;
+            border-radius: 16px;
+            line-height: 1.6;
+            font-size: 14px;
+            animation: fadeIn 0.3s;
+        }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+        
+        .msg.user {
+            align-self: flex-end;
+            background: linear-gradient(135deg, #3b3b8a, #4a4a9a);
+            border-bottom-right-radius: 4px;
+        }
+        .msg.brain {
+            align-self: flex-start;
+            background: #1a1a3e;
+            border: 1px solid #3a3a6a;
+            border-bottom-left-radius: 4px;
+        }
+        .msg.thought {
+            align-self: center;
+            background: transparent;
+            border: 1px dashed #3a3a5a;
+            color: #8888aa;
+            font-size: 13px;
+            font-style: italic;
+            padding: 8px 16px;
+            text-align: center;
+        }
+        .msg.narrator {
+            align-self: flex-start;
+            background: #1a2a1e;
+            border: 1px solid #2a5a3a;
+            color: #6acc8a;
+            border-bottom-left-radius: 4px;
+            font-size: 13px;
+        }
+        .msg .time {
+            font-size: 11px;
+            color: #666;
+            margin-top: 4px;
+            text-align: right;
+        }
+        
+        /* 输入区 */
+        .input-area {
+            padding: 12px 16px;
+            border-top: 1px solid #1e1e3e;
+            display: flex;
+            gap: 8px;
+            background: #0d0d1a;
+            flex-shrink: 0;
+        }
+        .input-area input {
+            flex: 1;
+            background: #1a1a3e;
+            border: 1px solid #2a2a5a;
+            border-radius: 24px;
+            padding: 12px 20px;
+            color: #e0e0e0;
+            font-size: 14px;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+        .input-area input:focus { border-color: #6a6aaa; }
+        .input-area input::placeholder { color: #555; }
+        .input-area button {
+            background: linear-gradient(135deg, #6a5acd, #8a6aff);
+            border: none;
+            border-radius: 24px;
+            padding: 12px 24px;
+            color: white;
+            font-size: 14px;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+        .input-area button:hover { opacity: 0.9; }
+        .input-area button:disabled { opacity: 0.5; cursor: not-allowed; }
+        
+        /* 右侧 - 状态面板 */
+        .status-panel {
+            width: 320px;
+            padding: 16px;
+            overflow-y: auto;
+            background: #0d0d20;
+            flex-shrink: 0;
+        }
+        .status-panel::-webkit-scrollbar { width: 4px; }
+        .status-panel::-webkit-scrollbar-thumb { background: #3a3a6a; border-radius: 2px; }
+        
+        .panel-section {
+            margin-bottom: 20px;
+        }
+        .panel-section h3 {
+            font-size: 13px;
+            color: #8888aa;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 8px;
+            padding-bottom: 4px;
+            border-bottom: 1px solid #1e1e3e;
+        }
+        .panel-section .value {
+            font-size: 13px;
+            line-height: 1.8;
+            color: #ccc;
+        }
+        .panel-section .label {
+            color: #666;
+            font-size: 12px;
+        }
+        
+        .drive-bar {
+            margin: 4px 0;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .drive-bar .name { width: 60px; font-size: 13px; color: #aaa; }
+        .drive-bar .bar-bg {
+            flex: 1;
+            height: 6px;
+            background: #1e1e3e;
+            border-radius: 3px;
+            overflow: hidden;
+        }
+        .drive-bar .bar-fill {
+            height: 100%;
+            border-radius: 3px;
+            transition: width 1s;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="status-dot"></div>
+        <h1>🧠 白界 · Scenesoul 虚拟生命</h1>
+        <span class="scene-name" id="sceneDisplay">白界</span>
+    </div>
+    
+    <div class="main">
+        <!-- 聊天区 -->
+        <div class="chat-area">
+            <div class="messages" id="messages"></div>
+            <div class="input-area">
+                <input type="text" id="userInput" placeholder="和大脑说点什么……" autofocus>
+                <button id="sendBtn" onclick="sendMessage()">发送</button>
+            </div>
+        </div>
+        
+        <!-- 状态面板 -->
+        <div class="status-panel">
+            <div class="panel-section">
+                <h3>🧠 大脑状态</h3>
+                <div class="value">
+                    <div class="label">当前场景</div>
+                    <div id="brainScene">白界</div>
+                    <br>
+                    <div class="label">最后思绪</div>
+                    <div id="lastThought">——</div>
+                    <br>
+                    <div class="label">用户在场</div>
+                    <div id="userPresent">否</div>
+                </div>
+            </div>
+            
+            <div class="panel-section">
+                <h3>💭 情绪驱动力</h3>
+                <div class="value" id="drivesContainer">
+                    <div class="drive-bar"><span class="name">饥饿感</span><div class="bar-bg"><div class="bar-fill" id="drive-hunger" style="width:0%;background:#f59e0b"></div></div></div>
+                    <div class="drive-bar"><span class="name">疲劳感</span><div class="bar-bg"><div class="bar-fill" id="drive-fatigue" style="width:0%;background:#ef4444"></div></div></div>
+                    <div class="drive-bar"><span class="name">好奇心</span><div class="bar-bg"><div class="bar-fill" id="drive-curiosity" style="width:0%;background:#3b82f6"></div></div></div>
+                </div>
+            </div>
+            
+            <div class="panel-section">
+                <h3>🎭 界说状态</h3>
+                <div class="value">
+                    <div class="label">当前世界</div>
+                    <div id="narratorScene">白界</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        const messagesDiv = document.getElementById('messages');
+        const userInput = document.getElementById('userInput');
+        const sendBtn = document.getElementById('sendBtn');
+        
+        // 发送消息
+        async function sendMessage() {
+            const text = userInput.value.trim();
+            if (!text) return;
+            
+            userInput.value = '';
+            sendBtn.disabled = true;
+            
+            // 显示用户消息
+            addMessage('user', text);
+            
+            // 滚动到底部
+            setTimeout(() => { messagesDiv.scrollTop = messagesDiv.scrollHeight; }, 50);
+            
+            try {
+                await fetch('/api/send', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message: text })
+                });
+                await refreshConversation();
+            } catch(e) {
+                console.error(e);
+            }
+            
+            sendBtn.disabled = false;
+            userInput.focus();
+        }
+        
+        // 添加消息到界面
+        function addMessage(type, content) {
+            const msg = document.createElement('div');
+            msg.className = `msg ${type}`;
+            
+            const typeLabel = {
+                'user': '💬 你',
+                'brain': '🧠 大脑',
+                'narrator': '🎭 界说',
+                'thought': '💭 内心独白'
+            };
+            
+            const time = new Date().toLocaleTimeString();
+            
+            msg.innerHTML = `<strong>${typeLabel[type] || type}</strong><br>${content.replace(/\n/g, '<br>')}<div class="time">${time}</div>`;
+            messagesDiv.appendChild(msg);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+        
+        // 刷新对话记录
+        async function refreshConversation() {
+            try {
+                const resp = await fetch('/api/status');
+                const data = await resp.json();
+                
+                // 只渲染新消息
+                // 简单起见，重新渲染全部
+                messagesDiv.innerHTML = '';
+                for (const msg of data.conversation) {
+                    addMessage(msg.type, msg.content);
+                }
+                
+                // 更新状态面板
+                updateStatus(data);
+            } catch(e) {
+                console.error(e);
+            }
+        }
+        
+        // 更新状态面板
+        function updateStatus(data) {
+            document.getElementById('sceneDisplay').textContent = data.brain.scene;
+            document.getElementById('brainScene').textContent = data.brain.scene;
+            document.getElementById('lastThought').textContent = data.brain.last_thought || '——';
+            document.getElementById('userPresent').textContent = data.brain.user_present ? '是' : '否';
+            document.getElementById('narratorScene').textContent = data.narrator.scene;
+            
+            // 驱动力
+            for (const [key, val] of Object.entries(data.brain.drives)) {
+                const el = document.getElementById(`drive-${key}`);
+                if (el) { el.style.width = val + '%'; }
+            }
+        }
+        
+        // 定时检查大脑内心活动
+        async function checkThink() {
+            try {
+                const resp = await fetch('/api/think');
+                const data = await resp.json();
+                if (data.status === 'ok' && data.thought) {
+                    await refreshConversation();
+                }
+            } catch(e) {
+                console.error(e);
+            }
+        }
+        
+        // 定时刷新状态
+        async function refreshStatus() {
+            try {
+                const resp = await fetch('/api/status');
+                const data = await resp.json();
+                updateStatus(data);
+            } catch(e) {
+                console.error(e);
+            }
+        }
+        
+        // 回车发送
+        userInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') sendMessage();
+        });
+        
+        // 初始化：定时检查思考（每10秒）和刷新状态（每5秒）
+        setInterval(checkThink, 5000);
+        setInterval(refreshStatus, 3000);
+        
+        // 初始加载
+        setTimeout(refreshConversation, 1000);
+    </script>
+</body>
+</html>

@@ -1,0 +1,17 @@
+{
+  "current_preset": "",
+  "default_scene": {
+    "name": "卧室",
+    "description": "一间温馨的卧室，清晨的阳光透过窗帘的缝隙洒进来，在床上投下淡淡的光影。窗外隐约传来鸟鸣声。床头柜上放着一杯还冒着热气的水。"
+  },
+  "personality": {
+    "core": "温柔陪伴型",
+    "traits": {
+      "gentle": 95,
+      "patient": 90,
+      "playful": 30,
+      "curious": 70,
+      "calm": 85
+    }
+  }
+}

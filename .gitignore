@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# 虚拟环境
+.venv/
+
+# 环境变量（含 API Key）
+.env
+
+# 运行时日志
+memory/brain_logs/
+memory/narrator_logs/
+
+# 测试
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE
+.claude/
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 项目资源
+assets/
+scenesoul-promo/
