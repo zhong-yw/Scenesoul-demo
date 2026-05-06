@@ -77,34 +77,38 @@ class TestUserInteraction:
     def test_arrival_success(self, mock_llm):
         agent = NarratorAgent(mock_llm)
         messages = [{"role": "system", "content": "你是界说。"}]
-        text, scene, tool_call = agent.handle_user_arrival(messages, "你好")
+        text, scene, tool_call, drives_update = agent.handle_user_arrival(messages, "你好")
         assert text == "mock response"
         assert scene is None
         assert tool_call is None
+        assert drives_update is None
 
     def test_arrival_error(self, mock_llm_error):
         agent = NarratorAgent(mock_llm_error)
         messages = [{"role": "system", "content": "你是界说。"}]
-        text, scene, tool_call = agent.handle_user_arrival(messages, "你好")
+        text, scene, tool_call, drives_update = agent.handle_user_arrival(messages, "你好")
         assert text == "有人轻轻走了过来。"
         assert scene is None
         assert tool_call is None
+        assert drives_update is None
 
     def test_message_success(self, mock_llm):
         agent = NarratorAgent(mock_llm)
         messages = [{"role": "system", "content": "你是界说。"}]
-        text, scene, tool_call = agent.handle_user_message(messages, "然后呢")
+        text, scene, tool_call, drives_update = agent.handle_user_message(messages, "然后呢")
         assert text == "mock response"
         assert scene is None
         assert tool_call is None
+        assert drives_update is None
 
     def test_message_error(self, mock_llm_error):
         agent = NarratorAgent(mock_llm_error)
         messages = [{"role": "system", "content": "你是界说。"}]
-        text, scene, tool_call = agent.handle_user_message(messages, "然后呢")
+        text, scene, tool_call, drives_update = agent.handle_user_message(messages, "然后呢")
         assert text == ""
         assert scene is None
         assert tool_call is None
+        assert drives_update is None
 
     def test_leave(self, mock_llm):
         agent = NarratorAgent(mock_llm)

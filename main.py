@@ -139,11 +139,11 @@ def _task_handle_user_input(loop, user_input):
     # Phase 1: 界说编织用户消息融入场景
     loop.renderer.show_thinking("界说正在编织场景...")
     if not loop.narrator_messages:
-        narration, new_scene, tool_call = loop.narrator.handle_user_arrival(
+        narration, new_scene, tool_call, drives_update = loop.narrator.handle_user_arrival(
             loop.narrator_messages, user_input, loop.brain.last_thought
         )
     else:
-        narration, new_scene, tool_call = loop.narrator.handle_user_message(
+        narration, new_scene, tool_call, drives_update = loop.narrator.handle_user_message(
             loop.narrator_messages, user_input, loop.brain.last_thought
         )
 
@@ -152,6 +152,12 @@ def _task_handle_user_input(loop, user_input):
         wr = loop.world.update_scene(tool_call["scene_name"], tool_call["description"])
         if wr.get("success"):
             loop.current_scene_name = tool_call["scene_name"]
+
+    # 处理驱动力更新
+    if drives_update:
+        loop.drives.update(drives_update)
+        for k, v in loop.drives.items():
+            loop.drives[k] = max(-100, min(100, v))
 
     if new_scene:
         loop.current_scene_name = new_scene
@@ -171,8 +177,6 @@ def _task_handle_user_input(loop, user_input):
 
 def _task_run_inner_loop(loop):
     """后台：大脑内心独白 + 界说观测（2 次 LLM 调用）"""
-    loop.tick_drives()
-
     loop.renderer.show_thinking("大脑正在思考...")
     thought = loop.brain_think()
 
@@ -197,7 +201,7 @@ def _task_handle_user_timeout(loop):
 class ScenesoulLoop:
     """白界主循环 — 管理双消息列表和驱动流程"""
 
-    def __init__(self, brain, narrator, world, renderer, current_scene_name):
+    def __init__(self, brain, narrator, world, renderer, current_scene_name, profile_name="default"):
         self.brain = brain
         self.narrator = narrator
         self.world = world
@@ -207,8 +211,9 @@ class ScenesoulLoop:
         self.brain_messages = []
         self.narrator_messages = []
 
-        # 状态
-        self.drives = {"hunger": 30, "fatigue": 10, "curiosity": 60}
+        # 状态 — 从 soul.md traits 读取初始驱动力
+        from profiles.profile_loader import ProfileLoader
+        self.drives = ProfileLoader.get_initial_drives(profile_name)
         self.current_scene_name = current_scene_name
         self.user_present = False
         self.sleep_mode = False
@@ -250,11 +255,6 @@ class ScenesoulLoop:
 
     # ── 原子操作（无 LLM 调用） ──
 
-    def tick_drives(self):
-        self.drives["fatigue"] = min(100, self.drives.get("fatigue", 0) + 3)
-        self.drives["curiosity"] = max(0, self.drives.get("curiosity", 30) - 1)
-        self.drives["hunger"] = min(100, self.drives.get("hunger", 0) + 1)
-
     def brain_think(self):
         """大脑内心独白 → 追加到 brain_messages"""
         thought = self.brain.internal_think(
@@ -290,33 +290,65 @@ class ScenesoulLoop:
         narrator_output = result["narration"]
         is_new_scene = False
 
-        # ── 处理 tool_call: update_scene ──
+        # ── 收集所有 tool_calls ──
+        tool_calls_list = []
+
         if result.get("tool_call"):
             tc = result["tool_call"]
-            tool_call_id = f"call_{tc['scene_name']}"
+            tool_calls_list.append({
+                "id": f"call_scene_{tc['scene_name']}",
+                "type": "function",
+                "function": {
+                    "name": "update_scene",
+                    "arguments": json.dumps(tc, ensure_ascii=False),
+                }
+            })
+
+        if result.get("drives_update"):
+            tool_calls_list.append({
+                "id": "call_drives",
+                "type": "function",
+                "function": {
+                    "name": "update_drives",
+                    "arguments": json.dumps({"drives": result["drives_update"]}, ensure_ascii=False),
+                }
+            })
+
+        # ── 处理 tool_calls ──
+        if tool_calls_list:
             self.narrator_messages.append({
                 "role": "assistant",
                 "content": narrator_output,
-                "tool_calls": [{
-                    "id": tool_call_id,
-                    "type": "function",
-                    "function": {
-                        "name": "update_scene",
-                        "arguments": json.dumps(tc, ensure_ascii=False),
-                    }
-                }],
+                "tool_calls": tool_calls_list,
             })
-            wr = self.world.update_scene(tc["scene_name"], tc["description"])
-            if wr.get("success"):
-                self.current_scene_name = tc["scene_name"]
-                is_new_scene = wr.get("is_new", False)
-            elif tc.get("scene_name"):
-                self.current_scene_name = tc["scene_name"]
-            self.narrator_messages.append({
-                "role": "tool",
-                "tool_call_id": tool_call_id,
-                "content": json.dumps(wr, ensure_ascii=False),
-            })
+
+            for tc in tool_calls_list:
+                tc_name = tc["function"]["name"]
+                args = json.loads(tc["function"]["arguments"])
+
+                if tc_name == "update_scene":
+                    wr = self.world.update_scene(args["scene_name"], args["description"])
+                    if wr.get("success"):
+                        self.current_scene_name = args["scene_name"]
+                        is_new_scene = wr.get("is_new", False)
+                    elif args.get("scene_name"):
+                        self.current_scene_name = args["scene_name"]
+                    self.narrator_messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc["id"],
+                        "content": json.dumps(wr, ensure_ascii=False),
+                    })
+
+                elif tc_name == "update_drives":
+                    drives_update = args.get("drives", {})
+                    self.drives.update(drives_update)
+                    for k, v in self.drives.items():
+                        self.drives[k] = max(-100, min(100, v))
+                    self.narrator_messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc["id"],
+                        "content": json.dumps({"success": True, "drives": self.drives}, ensure_ascii=False),
+                    })
         else:
             self.narrator_messages.append({"role": "assistant", "content": narrator_output})
             if result.get("scene_name"):
@@ -444,7 +476,7 @@ def run_cli(preset_name=None, debug=False):
         renderer.print_system(scene_desc)
 
     # ── 初始化主循环 ──
-    loop = ScenesoulLoop(brain, narrator, world, renderer, current_scene_name)
+    loop = ScenesoulLoop(brain, narrator, world, renderer, current_scene_name, profile_name=profile_name)
     __main__._loop = loop
 
     # ── 初始触发（同步） ──
@@ -486,7 +518,13 @@ def run_cli(preset_name=None, debug=False):
                 hour = time.localtime().tm_hour
                 is_night = hour >= 21 or hour < 6
 
-                if is_night and loop.drives.get("fatigue", 0) >= 80 and not loop.sleep_mode:
+                # 查找疲劳相关驱动力（支持中英文键名）
+                fatigue_val = 0
+                for k, v in loop.drives.items():
+                    if "疲" in k or "fatigue" in k.lower():
+                        fatigue_val = max(fatigue_val, v)
+
+                if is_night and fatigue_val >= 80 and not loop.sleep_mode:
                     loop.sleep_mode = True
                     renderer.print_system("夜深了，大脑渐渐进入沉睡……")
                     thought = "……（沉睡中，呼吸平稳）"
@@ -496,7 +534,7 @@ def run_cli(preset_name=None, debug=False):
                     loop.brain_messages.append({"role": "assistant", "content": thought})
                     loop.narrator_messages.append({"role": "user", "content": thought})
                     loop.last_think_time = now - THINK_INTERVAL * 2
-                elif not is_night or loop.drives.get("fatigue", 0) < 50:
+                elif not is_night or fatigue_val < 50:
                     loop.sleep_mode = False
                     loop.run_inner_loop()
                 loop.last_think_time = now

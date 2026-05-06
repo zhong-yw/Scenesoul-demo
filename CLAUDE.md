@@ -98,7 +98,8 @@ tests/                        — pytest 测试套件
 
 两个独立记忆实例（[memory/memory_system.py](memory/memory_system.py)）：
 
-- **BrainMemory**: L1 工作记忆（Python dict：场景、驱动力 `{hunger, fatigue, curiosity}`、用户状态）+ L2 每日 JSONL 日志文件
+- **BrainMemory**: L1 工作记忆（Python dict：场景、用户状态）+ L2 每日 JSONL 日志文件
+- **驱动力系统**: 从 soul.md 的 traits 字段读取初始值（自定义中文特质名），界说通过 `update_drives` 工具更新，`tick_drives()` 每轮微量衰减
 - **NarratorMemory**: S1 场景状态（场景名、进度、角色）+ S3 事件历史 JSONL
 
 ### 上下文构造器

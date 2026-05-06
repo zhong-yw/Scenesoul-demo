@@ -26,21 +26,31 @@ profiles/
 
 ### 2.1 soul.md — 人格灵魂
 
-```markdown
+```yaml
 ---
 core: <人格类型名称>
 traits:
-  <特质名>: <0-100的数值>
-  <特质名>: <0-100的数值>
-  ...
+  <特质名>: {value: <数值>, desc: "<描述>"}
+  <特质名>: {value: <数值>}            # desc 可省略
+  <特质名>: <数值>                      # 简写，无描述
 ---
 
 <人格描述正文>
 ```
 
 - **frontmatter `core`**：字符串，人格类型名称
-- **frontmatter `traits`**：字典，特质名到数值的映射。支持的特质：`gentle`（温柔）、`patient`（耐心）、`playful`（俏皮）、`curious`（好奇）、`calm`（平静）
+- **frontmatter `traits`**：字典，特质名到 `{value, desc}` 的映射
+  - `value`：数值，默认取值范围 -100~100
+  - `desc`：可选，描述该特质的含义和高低值的表现。为空时按特质名字面意思理解
 - **body**：自由文本，描述人格特点。直接注入大脑 system prompt 的【人格设定】段
+
+示例：
+```yaml
+traits:
+  温柔: {value: 80, desc: "对他人的关怀程度。高时说话体贴，低时冷漠疏离。"}
+  好奇: {value: 60}   # 无描述，按字面理解
+  平静: 75            # 简写
+```
 
 ### 2.2 memory.md — 长期记忆
 

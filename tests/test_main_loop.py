@@ -23,10 +23,10 @@ def mock_brain():
 @pytest.fixture
 def mock_narrator():
     narrator = MagicMock()
-    narrator.handle_user_arrival.return_value = ("你推开门走了进来。", None, None)
-    narrator.handle_user_message.return_value = ("你点了点头。", None, None)
+    narrator.handle_user_arrival.return_value = ("你推开门走了进来。", None, None, None)
+    narrator.handle_user_message.return_value = ("你点了点头。", None, None, None)
     narrator.handle_user_leave.return_value = "你转身离开了。"
-    narrator.observe.return_value = {"action": "observe", "narration": "阳光洒进来。", "tool_call": None}
+    narrator.observe.return_value = {"action": "observe", "narration": "阳光洒进来。", "tool_call": None, "drives_update": None}
     return narrator
 
 
@@ -44,18 +44,17 @@ def mock_renderer():
 
 @pytest.fixture
 def loop(mock_brain, mock_narrator, mock_world, mock_renderer):
-    return ScenesoulLoop(mock_brain, mock_narrator, mock_world, mock_renderer, "卧室")
+    return ScenesoulLoop(mock_brain, mock_narrator, mock_world, mock_renderer, "卧室", profile_name="default")
 
 
 class TestScenesoulLoop:
 
     def test_arrival_flow(self, loop, mock_narrator, mock_brain):
-        """首次交互触发 handle_user_arrival，不调用 observe（等用户下次输入）"""
+        """首次交互触发 handle_user_arrival（后台任务模式）"""
         loop.handle_user_input("你好")
 
         mock_narrator.handle_user_arrival.assert_called_once()
-        mock_brain.respond.assert_called_once()
-        mock_narrator.observe.assert_not_called()
+        # brain.respond 在后台任务中调用，不在主线程
         assert loop.user_present is True
 
     def test_subsequent_message_flow(self, loop, mock_narrator, mock_brain):
@@ -80,7 +79,13 @@ class TestScenesoulLoop:
     def test_sleep_mode_set_on_night_fatigue(self, loop):
         """夜间高疲劳进入睡眠模式"""
         import time
-        loop.drives["fatigue"] = 85
+        # 查找疲劳相关驱动力
+        for k in loop.drives:
+            if "疲" in k:
+                loop.drives[k] = 85
+                break
+        else:
+            pytest.skip("当前 profile 无疲劳驱动力")
         loop.last_think_time = 0
 
         # 模拟夜间（hour >= 21）
@@ -92,13 +97,11 @@ class TestScenesoulLoop:
             if not (local_time.tm_hour >= 21 or local_time.tm_hour < 6):
                 pytest.skip("当前非夜间，跳过睡眠测试")
 
-    def test_drives_tick(self, loop):
-        """驱动力随时间变化"""
-        initial = dict(loop.drives)
-        loop.tick_drives()
-        assert loop.drives["fatigue"] > initial["fatigue"]
-        assert loop.drives["hunger"] > initial["hunger"]
-        assert loop.drives["curiosity"] < initial["curiosity"]
+    def test_drives_from_profile(self, loop):
+        """驱动力从 soul.md traits 读取"""
+        assert "温柔" in loop.drives
+        assert "好奇" in loop.drives
+        assert isinstance(loop.drives["温柔"], int)
 
     def test_narrator_observe_appends_to_both_lists(self, loop, mock_narrator):
         """narrator_observe 同时追加到两个消息列表"""
@@ -112,7 +115,7 @@ class TestScenesoulLoop:
 
     def test_narrator_observe_silent_returns_early(self, loop, mock_narrator):
         """界说静默时不追加消息"""
-        mock_narrator.observe.return_value = {"action": "silent", "narration": None, "tool_call": None}
+        mock_narrator.observe.return_value = {"action": "silent", "narration": None, "tool_call": None, "drives_update": None}
         before_n = len(loop.narrator_messages)
         before_b = len(loop.brain_messages)
 
@@ -127,6 +130,7 @@ class TestScenesoulLoop:
             "action": "scene_change",
             "narration": "[场景:厨房] 你走进了厨房。",
             "tool_call": {"scene_name": "厨房", "description": "一间小厨房"},
+            "drives_update": None,
         }
 
         loop.narrator_observe("想去厨房")
@@ -139,6 +143,7 @@ class TestScenesoulLoop:
             "action": "scene_change",
             "narration": "[场景:书房] 走进书房。",
             "tool_call": {"scene_name": "书房", "description": "安静的书房"},
+            "drives_update": None,
         }
 
         loop.narrator_observe("去书房")

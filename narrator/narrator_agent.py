@@ -33,7 +33,25 @@ UPDATE_SCENE_TOOL = {
     }
 }
 
-NARRATOR_TOOLS = [UPDATE_SCENE_TOOL]
+UPDATE_DRIVES_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "update_drives",
+        "description": "更新大脑的驱动力/特质状态。根据场景、事件、大脑的行为调整数值。",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "drives": {
+                    "type": "object",
+                    "description": "要更新的驱动力键值对，如 {\"好奇\": 80, \"平静\": 30}。只传需要变化的项。键名必须与 soul.md 中的 traits 一致。"
+                }
+            },
+            "required": ["drives"]
+        }
+    }
+}
+
+NARRATOR_TOOLS = [UPDATE_SCENE_TOOL, UPDATE_DRIVES_TOOL]
 
 
 class NarratorAgent:
@@ -91,22 +109,26 @@ class NarratorAgent:
                 print(f"\n[🐞 界说原始输出] content={content}")
                 print(f"[🐞 界说 tool_calls] {json.dumps(tool_calls, ensure_ascii=False) if tool_calls else '无'}")
 
-            # 处理 tool_call
+            # 处理 tool_calls（可能有多个）
             scene_tool_call = None
+            drives_tool_call = None
             if tool_calls:
                 for tc in tool_calls:
-                    if tc["function"]["name"] == "update_scene":
-                        try:
-                            args = json.loads(tc["function"]["arguments"])
-                            scene_tool_call = {
-                                "scene_name": args.get("scene_name", ""),
-                                "description": args.get("description", ""),
-                            }
-                        except (json.JSONDecodeError, KeyError):
-                            pass
+                    tc_name = tc["function"]["name"]
+                    try:
+                        args = json.loads(tc["function"]["arguments"])
+                    except (json.JSONDecodeError, KeyError):
+                        continue
+                    if tc_name == "update_scene":
+                        scene_tool_call = {
+                            "scene_name": args.get("scene_name", ""),
+                            "description": args.get("description", ""),
+                        }
+                    elif tc_name == "update_drives":
+                        drives_tool_call = args.get("drives", {})
 
             # 如果输出为空且没有 tool_call，静静观察
-            if not content and not scene_tool_call:
+            if not content and not scene_tool_call and not drives_tool_call:
                 self.quiet_rounds += 1
                 return {"action": "silent", "narration": None, "tool_call": None}
 
@@ -137,6 +159,7 @@ class NarratorAgent:
                 "action": action,
                 "narration": narration,
                 "tool_call": scene_tool_call,
+                "drives_update": drives_tool_call,
                 "scene_name": scene_name_from_text,
             }
 
@@ -161,7 +184,7 @@ class NarratorAgent:
         return text, None
 
     def _chat_with_scene_tool(self, context):
-        """调用 LLM（带 tool_call），返回 (narration, scene_name, tool_call)"""
+        """调用 LLM（带 tool_call），返回 (narration, scene_name, tool_call, drives_update)"""
         response = self.llm.chat_with_tools(
             messages=context,
             tools=NARRATOR_TOOLS,
@@ -171,23 +194,27 @@ class NarratorAgent:
         tool_calls = response.get("tool_calls")
 
         scene_tool_call = None
+        drives_tool_call = None
         if tool_calls:
             for tc in tool_calls:
-                if tc["function"]["name"] == "update_scene":
-                    try:
-                        args = json.loads(tc["function"]["arguments"])
-                        scene_tool_call = {
-                            "scene_name": args.get("scene_name", ""),
-                            "description": args.get("description", ""),
-                        }
-                    except (json.JSONDecodeError, KeyError):
-                        pass
+                tc_name = tc["function"]["name"]
+                try:
+                    args = json.loads(tc["function"]["arguments"])
+                except (json.JSONDecodeError, KeyError):
+                    continue
+                if tc_name == "update_scene":
+                    scene_tool_call = {
+                        "scene_name": args.get("scene_name", ""),
+                        "description": args.get("description", ""),
+                    }
+                elif tc_name == "update_drives":
+                    drives_tool_call = args.get("drives", {})
 
         narration, scene_name = self._parse_narration(content)
-        return narration, scene_name, scene_tool_call
+        return narration, scene_name, scene_tool_call, drives_tool_call
 
     def handle_user_arrival(self, messages, user_input, brain_thought=None):
-        """用户首次到达场景，返回 (narration, scene_name, tool_call)
+        """用户首次到达场景，返回 (narration, scene_name, tool_call, drives_update)
 
         用情境融合模式：将用户的出现编织为场景中的自然事件。
         支持 tool_call 创建新场景。
@@ -211,10 +238,10 @@ class NarratorAgent:
         try:
             return self._chat_with_scene_tool(context)
         except Exception:
-            return "有人轻轻走了过来。", None, None
+            return "有人轻轻走了过来。", None, None, None
 
     def handle_user_message(self, messages, user_input, brain_thought=None):
-        """用户已在场景中，编织其下一句话，返回 (narration, scene_name, tool_call)
+        """用户已在场景中，编织其下一句话，返回 (narration, scene_name, tool_call, drives_update)
 
         用情境融合模式：将用户的话编织为场景中的自然对话/动作。
         支持 tool_call 创建/更新场景。
@@ -237,7 +264,7 @@ class NarratorAgent:
         try:
             return self._chat_with_scene_tool(context)
         except Exception:
-            return "", None, None
+            return "", None, None, None
 
     def handle_user_leave(self, messages):
         """用户离开"""

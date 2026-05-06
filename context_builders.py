@@ -76,16 +76,17 @@ class BrainContextBuilder:
     def _rewrite_state_fields(self, system_content, drives, current_scene_info):
         """重写 system prompt 中的【当前状态】和【世界的场景】"""
         if not drives:
-            drives = {"hunger": 0, "fatigue": 0, "curiosity": 30}
+            drives = {"温柔": 50, "好奇": 50}
 
         scene_name = current_scene_info.get("name", "未知") if current_scene_info else "未知"
         now = datetime.now().strftime("%Y-%m-%d %H:%M")
 
+        drives_str = ",".join(f"{k}:{v}" for k, v in drives.items())
         state_block = (
             f"【当前状态】\n"
             f"时间：{now}\n"
             f"场景：{scene_name}\n"
-            f"驱动力：hunger:{drives.get('hunger', 0)},fatigue:{drives.get('fatigue', 0)},curiosity:{drives.get('curiosity', 30)}"
+            f"驱动力：{drives_str}"
         )
 
         # 场景列表需要从 scene.md 读取
@@ -201,13 +202,12 @@ def build_state_header(drives=None, current_scene_name=None):
     供 main.py 在拼接界说输出到大脑消息列表时使用。
     """
     if not drives:
-        drives = {"hunger": 0, "fatigue": 0, "curiosity": 30}
+        drives = {"温柔": 50, "好奇": 50}
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
     scene = current_scene_name or "未知"
+    drives_str = ",".join(f"{k}:{v}" for k, v in drives.items())
     return (
         f"[当前状态] 时间:{now} "
         f"场景:{scene} "
-        f"驱动力:hunger:{drives.get('hunger', 0)},"
-        f"fatigue:{drives.get('fatigue', 0)},"
-        f"curiosity:{drives.get('curiosity', 30)}"
+        f"驱动力:{drives_str}"
     )

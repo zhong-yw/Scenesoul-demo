@@ -127,6 +127,9 @@ def observe(self, messages):
 
 ### 工具定义
 
+界说支持两个工具：
+
+**update_scene** — 创建/更新场景描述：
 ```python
 UPDATE_SCENE_TOOL = {
     "type": "function",
@@ -144,6 +147,29 @@ UPDATE_SCENE_TOOL = {
     }
 }
 ```
+
+**update_drives** — 更新大脑驱动力/特质：
+```python
+UPDATE_DRIVES_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "update_drives",
+        "description": "更新大脑的驱动力/特质状态。根据场景、事件、大脑的行为调整数值。",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "drives": {
+                    "type": "object",
+                    "description": "要更新的驱动力键值对，如 {\"好奇\": 80, \"平静\": 30}。只传需要变化的项。"
+                }
+            },
+            "required": ["drives"]
+        }
+    }
+}
+```
+
+工具列表：`NARRATOR_TOOLS = [UPDATE_SCENE_TOOL, UPDATE_DRIVES_TOOL]`
 
 ### 调用流程
 

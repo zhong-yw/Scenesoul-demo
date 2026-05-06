@@ -77,6 +77,42 @@ class ProfileLoader:
     def load_scene(cls, profile_name):
         return cls._parse_markdown(cls._profile_path(profile_name, "scene.md"))
 
+    @classmethod
+    def get_initial_drives(cls, profile_name):
+        """从 soul.md frontmatter 的 traits 读取初始驱动力
+
+        支持两种格式：
+        - 新格式: traits: {温柔: {value: 80, desc: "..."}}
+        - 旧格式: traits: {温柔: 80}
+        """
+        frontmatter, _ = cls.load_soul(profile_name)
+        traits = frontmatter.get("traits", {})
+        if not traits:
+            return {"温柔": 50, "好奇": 50}
+        drives = {}
+        for k, v in traits.items():
+            if isinstance(v, dict):
+                drives[k] = v.get("value", 50)
+            else:
+                drives[k] = v
+        return drives
+
+    @classmethod
+    def get_drives_desc(cls, profile_name):
+        """从 soul.md frontmatter 的 traits 读取驱动力描述
+
+        支持两种格式：
+        - 新格式: traits: {温柔: {value: 80, desc: "..."}}
+        - 旧格式: traits: {温柔: 80} → 返回空 dict
+        """
+        frontmatter, _ = cls.load_soul(profile_name)
+        traits = frontmatter.get("traits", {})
+        desc = {}
+        for k, v in traits.items():
+            if isinstance(v, dict) and v.get("desc"):
+                desc[k] = v["desc"]
+        return desc
+
     # ── system prompt 组装 ──
 
     @classmethod
@@ -90,6 +126,7 @@ class ProfileLoader:
         _, brain_body = cls.load_brain(profile_name)
         _, world_body = cls.load_world(profile_name)
         _, memory_body = cls.load_memory(profile_name)
+        drives_desc = cls.get_drives_desc(profile_name)
 
         parts = ["你是白界的一个意识体，生活在白界之中。"]
 
@@ -115,6 +152,13 @@ class ProfileLoader:
         if memory_body:
             parts.append("")
             parts.append(memory_body)
+
+        # ── 驱动力描述 ──
+        if drives_desc:
+            parts.append("")
+            parts.append("【你的特质】")
+            for name, desc in drives_desc.items():
+                parts.append(f"- {name}：{desc}")
 
         # ── 固定指令 ──
         parts.append("")
@@ -148,11 +192,12 @@ class ProfileLoader:
     def build_narrator_system_prompt(cls, profile_name):
         """组装界说 system prompt
 
-        顺序：身份 → 职责 → 输出规范 → 场景维护规则 → narrator.md → 世界模样
+        顺序：身份 → 职责 → 输出规范 → 场景维护规则 → 驱动力管理 → narrator.md → 世界模样
         观测任务已整合到固定 system，user 消息只需包含大脑内心独白。
         """
         _, narrator_body = cls.load_narrator(profile_name)
         _, world_body = cls.load_world(profile_name)
+        drives_desc = cls.get_drives_desc(profile_name)
 
         parts = []
 
@@ -195,6 +240,16 @@ class ProfileLoader:
         parts.append("- 已有场景非关键变化：仅输出世界消息")
         parts.append("- 关键持久状态变化：输出世界消息 + update_scene() 更新 scene.md")
         parts.append("- update_scene() 的 description 只写场景本身的持久状态（氛围、布置、光线、气味），不写大脑的行动或进入方式")
+
+        # ── 驱动力管理 ──
+        parts.append("")
+        parts.append("【驱动力管理】")
+        parts.append("你观察大脑的行为和场景变化，通过 update_drives() 工具调整驱动力。")
+        if drives_desc:
+            parts.append("当前驱动力定义：")
+            for name, desc in drives_desc.items():
+                parts.append(f"- {name}：{desc}")
+        parts.append("只在有明显变化时更新，不要每轮都调。驱动力键名必须与 soul.md 中的 traits 一致。")
 
         # ── narrator.md → 风格设定 ──
         if narrator_body:
