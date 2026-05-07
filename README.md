@@ -33,18 +33,21 @@ python main.py --debug             # 显示界说原始输出
 ## 架构
 
 ```
-main.py                   — 入口：CLI 交互循环（ScenesoulLoop 双消息列表）
+main.py                   — 入口：CLI 交互循环（ScenesoulLoop 双消息列表 + 后台 LLM 任务）
 llm_client.py             — LLM 调用封装（chat + chat_with_tools）
 context_builders.py       — Brain/Narrator 上下文构造 + token 裁剪
 brain/brain_agent.py      — 大脑 Agent：内心独白、用户对话
-narrator/narrator_agent.py — 界说 Agent：场景构造、观测、推动剧情
+narrator/narrator_agent.py — 界说 Agent：场景构造、观测、推动剧情、更新驱动力
 memory/memory_system.py   — 双层记忆：Brain L1/L2 + Narrator S1/S3
 world/world_builder.py    — 场景构造器（scene.md 动态维护）
 ui/cli_renderer.py        — Windows 终端渲染（DECSTBM 滚动区域）
+ui/web_server.py          — 旧版 Flask Web UI（尚未迁移到 v0.5 双消息列表）
 profiles/                 — 预设配置（6 个 .md 文件定义人格/场景/行为）
 ```
 
 核心设计：`ScenesoulLoop` 维护两个独立消息列表（`brain_messages` 和 `narrator_messages`），两个 Agent 不直接通信——大脑的内心独白写入界说的 user 消息，界说的输出 + 状态头部写入大脑的 user 消息。
+
+当前主线是 CLI 模式。`ui/web_server.py` 仍使用 v0.1 风格接口（如 `observe_brain_thought()`、旧版 Agent 构造参数），需要迁移后才能作为可用 Web UI。
 
 ## 测试
 

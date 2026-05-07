@@ -2,13 +2,15 @@
 
 > **文档标识：** 05-记忆系统/01-大脑记忆系统-BrainMemory  
 > **对应代码：** [memory/memory_system.py](memory/memory_system.py) 类 `BrainMemory`  
-> **版本：** v0.1 Demo
+> **版本：** v0.5（保留模块，当前主循环未深度接入）
 
 ---
 
 ## 一、概述
 
 `BrainMemory` 是大脑 Agent 的记忆系统，采用两层结构（L1 + L2）。当前尚未实现 L3（核心记忆层）。
+
+注意：v0.5 的主循环由 `ScenesoulLoop` 直接维护 `brain_messages`、`drives`、`current_scene_name` 等运行时状态；`BrainMemory` 仍有测试覆盖和日志能力，但当前 `BrainAgent` 不再直接持有它。
 
 | 层级 | 名称 | 类比人类 | 存储方式 | 更新频率 | 容量 |
 |------|------|----------|----------|----------|------|
@@ -24,7 +26,6 @@
 self.l1 = {
     "current_scene": "卧室",
     "scene_description": "一间温馨的卧室，淡蓝色的窗帘半掩着…",
-    "current_time": datetime.now().strftime("%Y-%m-%d %H:%M"),
     "user_present": False,
     "last_input": "",
     "drives": {"hunger": 0, "fatigue": 0, "curiosity": 30}
@@ -35,12 +36,11 @@ self.l1 = {
 
 | 字段 | 类型 | 更新者 | 更新时机 | 读���者 |
 |------|------|--------|----------|--------|
-| `current_scene` | str | `BrainAgent.update_scene()` | 界说切换场景后 | `BrainContextBuilder._build_user_content()` |
-| `scene_description` | str | `BrainAgent.update_scene()` | 界说切换场景后 | `BrainContextBuilder._build_user_content()` |
-| `current_time` | str | 初始化时设置一次 | 永不更新 | 不被读取（实际使用 `_build_time_context()`） |
-| `user_present` | bool | `BrainAgent.respond()` / `main.py` | 用户到达/超时 | CLI 的 /status 命令 |
-| `last_input` | str | `BrainAgent.respond()` | 用户发送消息时 | 仅用于日志，当前无读取 |
-| `drives` | dict | `BrainAgent.tick_drives()` | 每轮思考前 | `BrainContextBuilder._build_user_content()` |
+| `current_scene` | str | 保留字段 | 当前主循环不读取 | 旧版上下文 |
+| `scene_description` | str | 保留字段 | 当前主循环不读取 | 旧版上下文 |
+| `user_present` | bool | 保留字段 | 当前主循环不读取 | 旧版状态 |
+| `last_input` | str | 保留字段 | 当前主循环不读取 | 旧版日志 |
+| `drives` | dict | 保留字段 | 当前主循环不读取 | 旧版驱动力 |
 
 ### L1 更新方法
 
@@ -80,10 +80,10 @@ memory/brain_logs/{YYYY-MM-DD}.jsonl
 
 | type 值 | 来源方法 | 含义 | weight 含义 |
 |---------|----------|------|------------|
-| `scene_change` | `BrainAgent.update_scene()` | 场景切换 | 未使用 |
-| `internal_think` | `BrainAgent.internal_think()` | 内心独白 | 未使用 |
-| `user_input` | `BrainAgent.respond()` | 用户消息（回显） | 未使用 |
-| `brain_response` | `BrainAgent.respond()` | 大脑回应用户 | 未使用 |
+| `scene_change` | 旧版主循环 | 场景切换 | 当前主线未写入 |
+| `internal_think` | 旧版主循环 | 内心独白 | 当前主线未写入 |
+| `user_input` | 旧版主循环 | 用户消息（回显） | 当前主线未写入 |
+| `brain_response` | 旧版主循环 | 大脑回应用户 | 当前主线未写入 |
 
 ### 写入方法
 
@@ -126,23 +126,19 @@ def get_recent_logs(self, n=10):
 
 ### 4.1 L2 内容未注入 LLM 上下文
 
-`BrainContextBuilder._build_memory_summary()` 读取了 L2 日志并格式化为文本，但：
+v0.5 的 `BrainContextBuilder` 不再持有 `BrainMemory`，也没有 `_build_memory_summary()` / `_build_user_content()` 这类旧版拼接路径。当前大脑上下文主要来自：
 
-1. 这个方法在 `_build_user_content()` 中被调用
-2. 结果被拼接到 `memory_summary` 字段
-3. 但注意 `_build_user_content()` 中的拼接逻辑：
+- profile 组装出的 system prompt
+- `brain_messages` 中的历史消息
+- `scene.md` 动态场景列表
+- `ScenesoulLoop.drives` 和 `current_scene_name`
 
-```python
-if memory_summary:
-    parts.append(f"\n今天的记忆片段：\n{memory_summary}")
-```
-
-理论上如果 L2 有日志就会拼接上去。查看调用链发现 `_build_user_content()` 的 `memory_summary` 在函数内部通过 `self._build_memory_summary()` 获取——这是正常的。问题在于 **L2 日志的数据量大时，直接拼接可能导致 token 快速膨胀且混乱**。
+因此 L2 日志虽然仍可写入/读取，但尚未进入 LLM 上下文。后续若重新接入，应先做摘要和重要性筛选，避免直接拼接 JSONL 导致 token 快速膨胀。
 
 ### 4.2 emotion_weight 未使用
 
 `log_l2()` 接受 `emotion_weight` 参数，但：
-- BrainAgent 在调用 `log_l2()` 时总是传默认值 `1`
+- 当前主线没有调用 `log_l2()`
 - 读取时没有对 weight 做任何处理
 - 没有基于 weight 的重要性排序或筛选
 

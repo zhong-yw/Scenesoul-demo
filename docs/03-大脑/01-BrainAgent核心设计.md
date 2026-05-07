@@ -13,11 +13,11 @@
 核心职责：
 1. **内心独白**——24/7 持续思考，产生"我"视角的内心活动
 2. **用户对话**——在界说构造的场景中自然地回应用户
-3. **记忆维护**——L1 工作记忆的更新 + L2 过程日志写入
+3. **状态记录**——维护 `last_thought` 和 `ctx.internal_monologue`，供界说和调试使用
 
 v0.5 变更：
 - 不再内部维护 messages 列表——接收外部传入的消息列表
-- 不再管理驱动力——tick_drives() 移到外部（ScenesoulLoop 管理）
+- 不再管理驱动力——驱动力由 `ScenesoulLoop` 持有，界说通过 `update_drives` 工具显式更新
 - 不再有 update_scene()——场景信息通过 BrainContextBuilder 从 scene.md 动态读取
 
 ---
@@ -83,10 +83,8 @@ def internal_think(self, messages, drives=None, current_scene_info=None):
 
 ```python
 def respond(self, messages, user_input, drives=None, current_scene_info=None):
-    context = list(messages)
-    context.append({"role": "user", "content": user_input})
     context = self.ctx.build_think_context(
-        messages=context,
+        messages=messages,
         drives=drives,
         current_scene_info=current_scene_info,
     )
@@ -101,8 +99,8 @@ def respond(self, messages, user_input, drives=None, current_scene_info=None):
 ```
 
 **关键设计：**
-- `respond()` 在调用 `build_think_context()` 之前先将用户消息作为 user 消息追加到 messages 副本中
-- 用户消息以原始文本形式传入（不含任何包装），与界说输出的世界消息同级别
+- 用户消息由 `main.py` 在调用 `respond()` 之前写入 `brain_messages`；`respond()` 只构建上下文并调用 LLM
+- 用户消息若由界说编织为旁白，会以带 `[当前状态]` 头部的世界消息进入大脑；若无旁白，才以原始文本进入
 - 大脑通过固定 system 中的【你的世界感知】规则自然区分：带 `[当前状态]` 头部的消息 = 世界，无此头部 = 用户
 
 ---
@@ -134,7 +132,7 @@ def respond(self, messages, user_input, drives=None, current_scene_info=None):
 
 ### 5.1 驱动力不在 BrainAgent 内部管理
 
-tick_drives() 逻辑已移到 `ScenesoulLoop` 类。驱动力数值通过 `build_think_context()` 的 drives 参数传递，最终写入 system 的 `【当前状态】` 字段中。
+驱动力数值通过 `build_think_context()` 的 `drives` 参数传递，最终写入 system 的 `【当前状态】` 字段中。当前没有每轮自动衰减函数；驱动力变化来自界说的 `update_drives` 工具调用，并由 `ScenesoulLoop` 裁剪到 -100~100。
 
 ### 5.2 无场景深度理解
 

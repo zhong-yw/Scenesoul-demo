@@ -268,25 +268,23 @@ update_scene(scene_name="书房", description="由老榆木书架围成的小书
 
 ```
 轮询循环:
-  1. tick_drives()                    — 驱动力数值更新
-  
-  2. brain.internal_think()           — 大脑内心独白
+  1. brain.internal_think()           — 大脑内心独白
      → 得到大脑独白文本
   
-  3. 如果大脑独白非空:
+  2. 如果大脑独白非空:
      a) 大脑独白写入界说消息列表 user
      b) 界说 LLM 调用（system + 多轮历史 + 本轮user）
-        → 得到 assistant 文本 + 可选 tool_call
+        → 得到 assistant 文本 + 可选 update_scene/update_drives tool_call
      c) 界说 assistant 追加到界说消息列表
      d) 如果 tool_call: 执行 → tool_result 追加到界说消息列表
-     e) 处理 tool_call: 更新 scene.md
+     e) 处理 tool_call: 更新 scene.md 或 loop.drives
      f) [当前状态] 头部 + 界说 assistant 文本
         → 拼接后追加到大脑消息列表 user
   
-  4. 如果大脑独白为空:
+  3. 如果大脑独白为空:
      跳过本轮界说（保持安静）
   
-  5. 下一个循环
+  4. 下一个循环
 ```
 
 ### 初始场景触发
