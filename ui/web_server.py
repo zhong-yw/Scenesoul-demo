@@ -1,65 +1,88 @@
-"""
-🌐 Web UI 服务器
-Flask 后端 + 前端页面
-"""
+"""🌐 Web UI 服务器（v0.6：使用共享 ScenesoulRuntime）"""
 
 import os
 import sys
 import threading
 import time
-import json
 from datetime import datetime
-from flask import Flask, render_template, jsonify, request
+
+from flask import Flask, jsonify, render_template, request
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from llm_client import LLMClient
 from brain.brain_agent import BrainAgent
+from llm_client import LLMClient
 from narrator.narrator_agent import NarratorAgent
+from runtime.scenesoul_runtime import ScenesoulRuntime
 from world.world_builder import WorldBuilder
 
 app = Flask(__name__)
 
-# 全局实例
-brain = None
-narrator = None
+runtime = None
 conversation_log = []
-last_think_time = time.time()
-think_interval = int(os.getenv("THINK_INTERVAL", "10"))
-USER_TIMEOUT = int(os.getenv("USER_TIMEOUT", "600"))  # 10 分钟
-last_user_time = 0
-user_present = False  # 用户在场状态
-MAX_CONVERSATION_LOG = 200  # 对话日志上限
-
-# 线程锁（保护全局状态）
+MAX_CONVERSATION_LOG = 200
 _lock = threading.Lock()
 
 
+def _now_str():
+    return datetime.now().strftime("%H:%M:%S")
+
+
 def _append_conversation(entry):
-    """追加对话日志并限制大小"""
     conversation_log.append(entry)
     while len(conversation_log) > MAX_CONVERSATION_LOG:
         conversation_log.pop(0)
 
 
-def init_agents(preset_name=None):
-    global brain, narrator
+def _append_runtime_events(events):
+    type_map = {
+        "thought": "thought",
+        "brain": "brain",
+        "narrator": "narrator",
+        "system": "narrator",
+    }
+    for event in events:
+        event_type = event.get("type")
+        if event_type == "scene_change":
+            _append_conversation({
+                "type": "narrator",
+                "content": f"（场景切换到 {event.get('scene_name', '未知')}）",
+                "time": _now_str(),
+            })
+            continue
+        mapped = type_map.get(event_type)
+        if not mapped:
+            continue
+        _append_conversation({
+            "type": mapped,
+            "content": event.get("content", ""),
+            "time": _now_str(),
+        })
+
+
+def init_agents(preset_name=None, debug=False):
+    """初始化共享 Runtime（兼容旧函数名）"""
+    global runtime, conversation_log
+
     world = WorldBuilder(preset_name=preset_name)
     llm = LLMClient()
-    brain = BrainAgent(llm, world_builder=world)
-    narrator = NarratorAgent(llm, world_builder=world)
-    
-    default_scene = narrator.world.get_default_scene()
-    brain.update_scene(default_scene)
-    
-    # 第一次内心活动
-    thought = brain.internal_think(narrator_input="你刚刚醒来，环顾四周——你在一片白色的虚无中。")
-    _append_conversation({
-        "type": "thought",
-        "content": thought,
-        "time": datetime.now().strftime("%H:%M:%S")
-    })
-    print(f"🧠 大脑已启动")
+    profile_name = world.get_profile_name() or "default"
+    brain = BrainAgent(llm, profile_name=profile_name)
+    narrator = NarratorAgent(llm, profile_name=profile_name)
+    narrator.debug = debug
+
+    initial_scene = world.get_default_scene()
+    runtime = ScenesoulRuntime(
+        brain=brain,
+        narrator=narrator,
+        world=world,
+        current_scene_name=initial_scene.get("name", "卧室"),
+        profile_name=profile_name,
+    )
+
+    conversation_log = []
+    _append_runtime_events(runtime.start_initial_scene())
+    print("🧠 Runtime 已启动")
 
 
 @app.route("/")
@@ -69,130 +92,58 @@ def index():
 
 @app.route("/api/status")
 def api_status():
-    global brain, narrator
-    if not brain or not narrator:
+    if not runtime:
         return jsonify({"error": "未初始化"})
-    
-    brain_status = brain.get_status()
-    narrator_status = narrator.get_status()
 
+    status = runtime.get_status()
     return jsonify({
         "brain": {
-            "scene": narrator_status["current_scene"]["name"],
-            "last_thought": brain_status["last_thought"],
-            "drives": brain_status["drives"],
-            "user_present": brain_status["user_present"]
+            "scene": status["scene"],
+            "last_thought": status["last_thought"],
+            "drives": status["drives"],
+            "user_present": status["user_present"],
         },
         "narrator": {
-            "scene": narrator_status["current_scene"]["name"]
+            "scene": status["scene"],
         },
-        "conversation": conversation_log[-20:]  # 最近 20 条
+        "conversation": conversation_log[-20:],
     })
 
 
 @app.route("/api/send", methods=["POST"])
 def api_send():
-    global brain, narrator, last_think_time, last_user_time, user_present
+    if not runtime:
+        return jsonify({"error": "未初始化"})
 
     data = request.get_json(silent=True) or {}
     user_input = data.get("message", "").strip()
-
     if not user_input:
         return jsonify({"error": "消息不能为空"})
 
     with _lock:
-        _append_conversation({
-            "type": "user",
-            "content": user_input,
-            "time": datetime.now().strftime("%H:%M:%S")
-        })
-
-        if not user_present:
-            user_present = True
-            narration = narrator.handle_user_arrival(user_input, brain.last_thought)
-        else:
-            narration = narrator.handle_user_message(user_input, brain.last_thought)
-        _append_conversation({
-            "type": "narrator",
-            "content": narration,
-            "time": datetime.now().strftime("%H:%M:%S")
-        })
-
-        response = brain.respond(user_input, narrator_input=narration)
-        _append_conversation({
-            "type": "brain",
-            "content": response,
-            "time": datetime.now().strftime("%H:%M:%S")
-        })
-
-        obs_result = narrator.observe_brain_thought(response, brain.memory.l1["drives"])
-        if obs_result["narration"]:
-            _append_conversation({
-                "type": "narrator",
-                "content": obs_result["narration"],
-                "time": datetime.now().strftime("%H:%M:%S")
-            })
-            if obs_result["action"] == "scene_change":
-                brain.update_scene(obs_result["scene"])
-
-        narrator.quiet_rounds = 0
-        brain.memory.update_l1("sleep_mode", False)
-
-        last_think_time = time.time()
-        last_user_time = time.time()
-        brain.memory.update_l1("user_present", True)
+        _append_conversation({"type": "user", "content": user_input, "time": _now_str()})
+        result = runtime.handle_user_input(user_input)
+        runtime.last_think_time = time.time()
+        _append_runtime_events(result.get("events", []))
 
     return jsonify({"status": "ok"})
 
 
 @app.route("/api/think")
 def api_think():
-    """大脑定时内部叙事（前端轮询调用）"""
-    global brain, narrator, last_think_time, last_user_time, user_present
+    if not runtime:
+        return jsonify({"error": "未初始化"})
 
     with _lock:
-        now = time.time()
-
-        if user_present and now - last_user_time > USER_TIMEOUT:
-            user_present = False
-            brain.memory.update_l1("user_present", False)
-            leave_narration = narrator.handle_user_leave()
-            if leave_narration:
-                _append_conversation({
-                    "type": "narrator",
-                    "content": leave_narration,
-                    "time": datetime.now().strftime("%H:%M:%S")
-                })
-            last_think_time = 0
-
-        if now - last_think_time < think_interval:
-            return jsonify({"status": "wait", "remaining": think_interval - (now - last_think_time)})
-
-        brain.tick_drives()
-        thought = brain.internal_think()
-        _append_conversation({
-            "type": "thought",
-            "content": thought,
-            "time": datetime.now().strftime("%H:%M:%S")
-        })
-
-        result = narrator.observe_brain_thought(thought, brain.memory.l1["drives"])
-        if result["narration"]:
-            _append_conversation({
-                "type": "narrator",
-                "content": result["narration"],
-                "time": datetime.now().strftime("%H:%M:%S")
-            })
-            if result["action"] == "scene_change":
-                brain.update_scene(result["scene"])
-
-        last_think_time = now
-
-    return jsonify({"status": "ok", "thought": thought})
+        result = runtime.tick()
+        if result["status"] == "wait":
+            return jsonify({"status": "wait", "remaining": result.get("remaining", 0)})
+        _append_runtime_events(result.get("events", []))
+        return jsonify({"status": "ok", "thought": result.get("thought")})
 
 
-def start_web(host="0.0.0.0", port=5000, preset_name=None):
-    init_agents(preset_name=preset_name)
+def start_web(host="0.0.0.0", port=5000, preset_name=None, debug=False):
+    init_agents(preset_name=preset_name, debug=debug)
     print(f"🌐 Web UI 已启动: http://{host}:{port}")
     print("   厂长在浏览器打开 http://localhost:5000 或 http://127.0.0.1:5000 即可")
     app.run(host=host, port=port, debug=False)

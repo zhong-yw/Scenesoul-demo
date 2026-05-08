@@ -44,11 +44,22 @@ class LLMClient:
     def _extract_content(self, response):
         """从响应中提取内容，处理 thinking 模式的 reasoning_content"""
         message = response.choices[0].message
-        content = message.content or ""
+        content = message.content
+        if content is None:
+            content = ""
+        elif isinstance(content, list):
+            parts = []
+            for part in content:
+                if isinstance(part, dict) and part.get("type") == "text":
+                    parts.append(part.get("text", ""))
+            content = "".join(parts).strip()
+        elif not isinstance(content, str):
+            content = str(content)
 
         # 某些 provider 在 thinking 模式下把内容放在 reasoning_content
-        if not content and hasattr(message, "reasoning_content") and message.reasoning_content:
-            content = message.reasoning_content
+        reasoning = getattr(message, "reasoning_content", None)
+        if not content and isinstance(reasoning, str) and reasoning:
+            content = reasoning
 
         return content, message
 

@@ -2,7 +2,6 @@ import argparse
 import os
 import sys
 import time
-import json
 import threading
 import queue
 
@@ -17,10 +16,7 @@ from brain.brain_agent import BrainAgent
 from narrator.narrator_agent import NarratorAgent
 from ui.cli_renderer import CliRenderer
 from world.world_builder import WorldBuilder
-from context_builders import build_state_header
-
-THINK_INTERVAL = int(os.getenv("THINK_INTERVAL", "10"))
-USER_TIMEOUT = int(os.getenv("USER_TIMEOUT", "600"))
+from runtime.scenesoul_runtime import ScenesoulRuntime
 
 
 # ── Windows 控制台输入（兼容 IME） ──
@@ -93,6 +89,9 @@ def parse_args():
     parser.add_argument("--preset", "-p", help="选择预设（profiles 目录名）")
     parser.add_argument("--list-presets", action="store_true", help="列出所有可用预设")
     parser.add_argument("--debug", action="store_true", help="显示界说原始 LLM 输出")
+    parser.add_argument("--web", action="store_true", help="启动 Web UI 模式")
+    parser.add_argument("--host", default="0.0.0.0", help="Web UI 监听地址（仅 --web 有效）")
+    parser.add_argument("--port", type=int, default=5000, help="Web UI 端口（仅 --web 有效）")
     return parser.parse_args()
 
 
@@ -129,50 +128,9 @@ def _background_task(loop, task):
 
 
 def _task_handle_user_input(loop, user_input):
-    """后台：用户输入处理（2 次 LLM 调用）
-
-    流程：界说编织 → 大脑回答 → 停，等待用户下次输入
-    不调用 narrator_observe()，让循环停下来等用户。
-    """
-    prev_scene = loop.current_scene_name
-
-    # Phase 1: 界说编织用户消息融入场景
-    loop.renderer.show_thinking("界说正在编织场景...")
-    if not loop.narrator_messages:
-        narration, new_scene, tool_call, drives_update = loop.narrator.handle_user_arrival(
-            loop.narrator_messages, user_input, loop.brain.last_thought
-        )
-    else:
-        narration, new_scene, tool_call, drives_update = loop.narrator.handle_user_message(
-            loop.narrator_messages, user_input, loop.brain.last_thought
-        )
-
-    # 处理 tool_call（创建/更新场景）
-    if tool_call:
-        wr = loop.world.update_scene(tool_call["scene_name"], tool_call["description"])
-        if wr.get("success"):
-            loop.current_scene_name = tool_call["scene_name"]
-
-    # 处理驱动力更新
-    if drives_update:
-        loop.drives.update(drives_update)
-        for k, v in loop.drives.items():
-            loop.drives[k] = max(-100, min(100, v))
-
-    if new_scene:
-        loop.current_scene_name = new_scene
-    if narration:
-        loop.narrator_inject_narration(narration)
-    else:
-        loop.brain_messages.append({"role": "user", "content": user_input})
-
-    if loop.current_scene_name != prev_scene:
-        loop.renderer.print_scene_change(loop.current_scene_name)
-
-    # Phase 2: 大脑回应
-    loop.renderer.show_thinking("大脑正在思考回应...")
-    loop.brain_respond(user_input)
-    loop.sleep_mode = False
+    """后台：用户输入处理"""
+    loop.renderer.show_thinking("正在处理用户输入...")
+    loop.handle_user_input_sync(user_input)
 
 
 def _task_run_inner_loop(loop):
@@ -186,16 +144,8 @@ def _task_run_inner_loop(loop):
 
 def _task_handle_user_timeout(loop):
     """后台：用户超时处理"""
-    loop.user_present = False
-    loop.renderer.print_system("用户安静地离开了……")
-
-    loop.renderer.show_thinking("界说正在描述离开...")
-    leave_narration = loop.narrator.handle_user_leave(loop.narrator_messages)
-    if leave_narration:
-        loop.narrator_inject_narration(leave_narration)
-
-    # 大脑继续思考
-    _task_run_inner_loop(loop)
+    loop.renderer.show_thinking("正在处理用户超时...")
+    loop.handle_user_timeout_sync()
 
 
 class ScenesoulLoop:
@@ -207,23 +157,83 @@ class ScenesoulLoop:
         self.world = world
         self.renderer = renderer
 
-        # 双消息列表
-        self.brain_messages = []
-        self.narrator_messages = []
-
-        # 状态 — 从 soul.md traits 读取初始驱动力
-        from profiles.profile_loader import ProfileLoader
-        self.drives = ProfileLoader.get_initial_drives(profile_name)
-        self.current_scene_name = current_scene_name
-        self.user_present = False
-        self.sleep_mode = False
-        self.last_think_time = time.time()
-        self.last_user_time = 0
+        # 共享 Runtime（CLI/Web 共用）
+        self.runtime = ScenesoulRuntime(
+            brain=brain,
+            narrator=narrator,
+            world=world,
+            current_scene_name=current_scene_name,
+            profile_name=profile_name,
+        )
 
         # 后台任务状态
         self.processing = False
         self._task_queue = queue.Queue()
         self._result_queue = queue.Queue()
+
+    @property
+    def brain_messages(self):
+        return self.runtime.brain_messages
+
+    @brain_messages.setter
+    def brain_messages(self, value):
+        self.runtime.brain_messages = value
+
+    @property
+    def narrator_messages(self):
+        return self.runtime.narrator_messages
+
+    @narrator_messages.setter
+    def narrator_messages(self, value):
+        self.runtime.narrator_messages = value
+
+    @property
+    def drives(self):
+        return self.runtime.drives
+
+    @drives.setter
+    def drives(self, value):
+        self.runtime.drives = value
+
+    @property
+    def current_scene_name(self):
+        return self.runtime.current_scene_name
+
+    @current_scene_name.setter
+    def current_scene_name(self, value):
+        self.runtime.current_scene_name = value
+
+    @property
+    def user_present(self):
+        return self.runtime.user_present
+
+    @user_present.setter
+    def user_present(self, value):
+        self.runtime.user_present = value
+
+    @property
+    def sleep_mode(self):
+        return self.runtime.sleep_mode
+
+    @sleep_mode.setter
+    def sleep_mode(self, value):
+        self.runtime.sleep_mode = value
+
+    @property
+    def last_think_time(self):
+        return self.runtime.last_think_time
+
+    @last_think_time.setter
+    def last_think_time(self, value):
+        self.runtime.last_think_time = value
+
+    @property
+    def last_user_time(self):
+        return self.runtime.last_user_time
+
+    @last_user_time.setter
+    def last_user_time(self, value):
+        self.runtime.last_user_time = value
 
     # ── 任务提交与结果排空 ──
 
@@ -253,158 +263,69 @@ class ScenesoulLoop:
             except queue.Empty:
                 pass
 
-    # ── 原子操作（无 LLM 调用） ──
+    def _render_events(self, events):
+        for event in events:
+            event_type = event.get("type")
+            content = event.get("content", "")
+            if event_type == "thought":
+                self.renderer.print_brain_thought(content)
+            elif event_type == "brain":
+                self.renderer.print_brain_thought(content)
+            elif event_type == "narrator":
+                self.renderer.print_narration(content)
+            elif event_type == "scene_change":
+                self.renderer.print_scene_change(event.get("scene_name", self.current_scene_name))
+            elif event_type == "system":
+                self.renderer.print_system(content)
+
+    # ── Runtime 封装（同步） ──
 
     def brain_think(self):
-        """大脑内心独白 → 追加到 brain_messages"""
-        thought = self.brain.internal_think(
-            messages=self.brain_messages,
-            drives=self.drives,
-            current_scene_info={"name": self.current_scene_name, "description": ""},
-        )
+        """大脑内心独白"""
+        thought = self.runtime.brain_think()
         self.renderer.print_brain_thought(thought)
-        self.brain_messages.append({"role": "assistant", "content": thought})
         return thought
 
     def brain_respond(self, user_input):
-        """大脑回应 → 追加到 brain_messages"""
-        reply = self.brain.respond(
-            messages=self.brain_messages,
-            user_input=user_input,
-            drives=self.drives,
-            current_scene_info={"name": self.current_scene_name, "description": ""},
-        )
+        """大脑回应"""
+        reply = self.runtime.brain_respond(user_input)
         self.renderer.print_brain_thought(reply)
-        self.brain_messages.append({"role": "assistant", "content": reply})
         return reply
 
     def narrator_observe(self, brain_thought):
-        """界说观测 → 处理输出 + tool_call + 拼接状态 → 追加到两个列表"""
-        self.narrator_messages.append({"role": "user", "content": brain_thought})
-        prev_scene = self.current_scene_name
-        result = self.narrator.observe(self.narrator_messages)
-
-        if not result.get("narration"):
-            return result
-
-        narrator_output = result["narration"]
-        is_new_scene = False
-
-        # ── 收集所有 tool_calls ──
-        tool_calls_list = []
-
-        if result.get("tool_call"):
-            tc = result["tool_call"]
-            tool_calls_list.append({
-                "id": f"call_scene_{tc['scene_name']}",
-                "type": "function",
-                "function": {
-                    "name": "update_scene",
-                    "arguments": json.dumps(tc, ensure_ascii=False),
-                }
-            })
-
-        if result.get("drives_update"):
-            tool_calls_list.append({
-                "id": "call_drives",
-                "type": "function",
-                "function": {
-                    "name": "update_drives",
-                    "arguments": json.dumps({"drives": result["drives_update"]}, ensure_ascii=False),
-                }
-            })
-
-        # ── 处理 tool_calls ──
-        if tool_calls_list:
-            self.narrator_messages.append({
-                "role": "assistant",
-                "content": narrator_output,
-                "tool_calls": tool_calls_list,
-            })
-
-            for tc in tool_calls_list:
-                tc_name = tc["function"]["name"]
-                args = json.loads(tc["function"]["arguments"])
-
-                if tc_name == "update_scene":
-                    wr = self.world.update_scene(args["scene_name"], args["description"])
-                    if wr.get("success"):
-                        self.current_scene_name = args["scene_name"]
-                        is_new_scene = wr.get("is_new", False)
-                    elif args.get("scene_name"):
-                        self.current_scene_name = args["scene_name"]
-                    self.narrator_messages.append({
-                        "role": "tool",
-                        "tool_call_id": tc["id"],
-                        "content": json.dumps(wr, ensure_ascii=False),
-                    })
-
-                elif tc_name == "update_drives":
-                    drives_update = args.get("drives", {})
-                    self.drives.update(drives_update)
-                    for k, v in self.drives.items():
-                        self.drives[k] = max(-100, min(100, v))
-                    self.narrator_messages.append({
-                        "role": "tool",
-                        "tool_call_id": tc["id"],
-                        "content": json.dumps({"success": True, "drives": self.drives}, ensure_ascii=False),
-                    })
-        else:
-            self.narrator_messages.append({"role": "assistant", "content": narrator_output})
-            if result.get("scene_name"):
-                self.current_scene_name = result["scene_name"]
-
-        # ── 写入大脑消息列表 ──
-        state_header = build_state_header(self.drives, self.current_scene_name)
-        content = f"{state_header}\n{narrator_output}"
-
-        if is_new_scene and result.get("tool_call"):
-            tc = result["tool_call"]
-            if tc.get("description"):
-                content += f"\n\n【{tc['scene_name']}】\n{tc['description']}"
-
-        self.brain_messages.append({"role": "user", "content": content})
-        self.renderer.print_narration(narrator_output)
-
-        if self.current_scene_name != prev_scene:
+        """界说观测"""
+        result = self.runtime.narrator_observe(brain_thought)
+        if result.get("narration"):
+            self.renderer.print_narration(result["narration"])
+        if result.get("scene_changed"):
             self.renderer.print_scene_change(self.current_scene_name)
 
         return result
 
     def narrator_inject_narration(self, narration):
         """将界说的旁白直接追加到两个列表"""
-        self.narrator_messages.append({"role": "assistant", "content": narration})
-        state_header = build_state_header(self.drives, self.current_scene_name)
-        self.brain_messages.append({
-            "role": "user",
-            "content": f"{state_header}\n{narration}",
-        })
+        self.runtime.narrator_inject_narration(narration)
         self.renderer.print_narration(narration)
 
     def start_initial_scene(self):
         """初始场景触发（同步，启动时调用）"""
-        self.narrator_messages.append({"role": "user", "content": ""})
-        result = self.narrator.observe(self.narrator_messages)
+        events = self.runtime.start_initial_scene()
+        self._render_events(events)
 
-        if result.get("narration"):
-            narrator_output = result["narration"]
-            self.narrator_messages.append({"role": "assistant", "content": narrator_output})
-            state_header = build_state_header(self.drives, self.current_scene_name)
-            self.brain_messages.append({
-                "role": "user",
-                "content": f"{state_header}\n{narrator_output}",
-            })
-            self.renderer.print_narration(narrator_output)
-        else:
-            initial_scene = self.world.get_default_scene()
-            scene_desc = initial_scene.get("description", "")
-            if not scene_desc:
-                scene_desc = f"你来到了{self.current_scene_name}。"
-            state_header = build_state_header(self.drives, self.current_scene_name)
-            self.brain_messages.append({
-                "role": "user",
-                "content": f"{state_header}\n{scene_desc}",
-            })
+    def run_inner_loop_sync(self):
+        result = self.runtime.run_inner_loop()
+        self._render_events(result.get("events", []))
+        return result
+
+    def handle_user_input_sync(self, user_input):
+        result = self.runtime.handle_user_input(user_input)
+        self._render_events(result.get("events", []))
+        return result
+
+    def handle_user_timeout_sync(self):
+        result = self.runtime.handle_user_timeout()
+        self._render_events(result.get("events", []))
+        return result
 
     # ── 提交后台任务的包装器 ──
 
@@ -508,36 +429,25 @@ def run_cli(preset_name=None, debug=False):
 
             now = time.time()
 
-            # 3. 用户超时检测
-            if not loop.processing and loop.user_present and now - loop.last_user_time > USER_TIMEOUT:
-                loop.handle_user_timeout()
-                loop.last_think_time = now
-
-            # 4. 定时内心独白
-            if not loop.processing and not loop.user_present and now - loop.last_think_time >= THINK_INTERVAL:
-                hour = time.localtime().tm_hour
-                is_night = hour >= 21 or hour < 6
-
-                # 查找疲劳相关驱动力（支持中英文键名）
-                fatigue_val = 0
-                for k, v in loop.drives.items():
-                    if "疲" in k or "fatigue" in k.lower():
-                        fatigue_val = max(fatigue_val, v)
-
-                if is_night and fatigue_val >= 80 and not loop.sleep_mode:
-                    loop.sleep_mode = True
-                    renderer.print_system("夜深了，大脑渐渐进入沉睡……")
-                    thought = "……（沉睡中，呼吸平稳）"
-                    brain.ctx.internal_monologue.append(thought)
-                    brain.last_thought = thought
-                    renderer.print_brain_thought(thought)
-                    loop.brain_messages.append({"role": "assistant", "content": thought})
-                    loop.narrator_messages.append({"role": "user", "content": thought})
-                    loop.last_think_time = now - THINK_INTERVAL * 2
-                elif not is_night or fatigue_val < 50:
+            # 3. Runtime 决策（超时 / 定时思考 / 睡眠）
+            if not loop.processing:
+                decision = loop.runtime.get_idle_action(now=now)
+                action = decision.get("action")
+                if action == "user_timeout":
+                    loop.handle_user_timeout()
+                    loop.last_think_time = now
+                elif action == "run_inner_loop":
                     loop.sleep_mode = False
                     loop.run_inner_loop()
-                loop.last_think_time = now
+                    loop.last_think_time = now
+                elif action == "sleep":
+                    renderer.print_system("夜深了，大脑渐渐进入沉睡……")
+                    thought = loop.runtime.enter_sleep_mode()
+                    if thought:
+                        renderer.print_brain_thought(thought)
+                    loop.last_think_time = now
+                elif action == "idle":
+                    loop.last_think_time = now
 
             time.sleep(POLL_INTERVAL)
 
@@ -552,4 +462,8 @@ if __name__ == "__main__":
     args = parse_args()
     if args.list_presets:
         list_presets()
-    run_cli(preset_name=args.preset, debug=args.debug)
+    if args.web:
+        from ui.web_server import start_web
+        start_web(host=args.host, port=args.port, preset_name=args.preset, debug=args.debug)
+    else:
+        run_cli(preset_name=args.preset, debug=args.debug)
