@@ -16,6 +16,7 @@ pip install -r requirements.txt
 OPENAI_API_KEY=your_key
 OPENAI_BASE_URL=http://127.0.0.1:8080/v1
 OPENAI_MODEL=ds-flash
+MEMORY_ENABLED=1
 ```
 
 ## 3. 启动方式

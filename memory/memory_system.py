@@ -3,11 +3,24 @@
 
 import json
 import os
+import threading
+from collections import deque
 from datetime import datetime
 
 MEMORY_DIR = os.path.join(os.path.dirname(__file__), "..", "memory")
 BRAIN_LOG_DIR = os.path.join(MEMORY_DIR, "brain_logs")
 NARRATOR_LOG_DIR = os.path.join(MEMORY_DIR, "narrator_logs")
+
+_RECENT_CACHE_SIZE = 50
+
+
+def _tail_lines(path, limit):
+    """读取文件最后 limit 行（简单实现；文件不大时够用）。"""
+    if not os.path.exists(path):
+        return []
+    with open(path, "r", encoding="utf-8") as f:
+        lines = f.readlines()
+    return lines[-limit:]
 
 
 class BrainMemory:
@@ -24,6 +37,19 @@ class BrainMemory:
             "drives": {"hunger": 0, "fatigue": 0, "curiosity": 30}
         }
         self.l2_file = os.path.join(BRAIN_LOG_DIR, f"{datetime.now().strftime('%Y-%m-%d')}.jsonl")
+        self._write_lock = threading.Lock()
+        self._recent_cache = deque(maxlen=_RECENT_CACHE_SIZE)
+        self._load_recent_cache()
+
+    def _load_recent_cache(self):
+        """启动时把今日日志的最后 N 条读入内存缓存。"""
+        for line in _tail_lines(self.l2_file, _RECENT_CACHE_SIZE):
+            if not line.strip():
+                continue
+            try:
+                self._recent_cache.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
 
     def update_l1(self, key, value):
         self.l1[key] = value
@@ -36,21 +62,31 @@ class BrainMemory:
             "content": content,
             "weight": emotion_weight
         }
-        with open(self.l2_file, "a", encoding="utf-8") as f:
-            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        line = json.dumps(entry, ensure_ascii=False) + "\n"
+        with self._write_lock:
+            with open(self.l2_file, "a", encoding="utf-8") as f:
+                f.write(line)
+            self._recent_cache.append(entry)
 
     def get_recent_logs(self, n=10):
-        """获取最近 n 条 L2 日志"""
-        if not os.path.exists(self.l2_file):
+        """获取最近 n 条 L2 日志（优先从内存缓存读）"""
+        with self._write_lock:
+            if self._recent_cache:
+                return list(self._recent_cache)[-n:]
+        # 兜底：缓存被清空或首次读时重建
+        return self._fallback_read_recent(self.l2_file, n)
+
+    @staticmethod
+    def _fallback_read_recent(path, n):
+        if not os.path.exists(path):
             return []
         logs = []
-        with open(self.l2_file, "r", encoding="utf-8") as f:
-            for line in f:
-                if line.strip():
-                    try:
-                        logs.append(json.loads(line))
-                    except json.JSONDecodeError:
-                        continue  # 跳过写入中的不完整行
+        for line in _tail_lines(path, max(n, _RECENT_CACHE_SIZE)):
+            if line.strip():
+                try:
+                    logs.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
         return logs[-n:]
 
 
@@ -65,6 +101,18 @@ class NarratorMemory:
             "last_scene_event": ""
         }
         self.s3_file = os.path.join(NARRATOR_LOG_DIR, f"events_{datetime.now().strftime('%Y-%m-%d')}.jsonl")
+        self._write_lock = threading.Lock()
+        self._recent_cache = deque(maxlen=_RECENT_CACHE_SIZE)
+        self._load_recent_cache()
+
+    def _load_recent_cache(self):
+        for line in _tail_lines(self.s3_file, _RECENT_CACHE_SIZE):
+            if not line.strip():
+                continue
+            try:
+                self._recent_cache.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
 
     def update_scene(self, scene_name, progress, characters=None):
         self.s1["current_scene"] = scene_name
@@ -80,19 +128,15 @@ class NarratorMemory:
             "type": event_type,
             "description": description
         }
-        with open(self.s3_file, "a", encoding="utf-8") as f:
-            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        line = json.dumps(entry, ensure_ascii=False) + "\n"
+        with self._write_lock:
+            with open(self.s3_file, "a", encoding="utf-8") as f:
+                f.write(line)
+            self._recent_cache.append(entry)
 
     def get_recent_events(self, n=5):
-        """获取最近 n 条 S3 事件"""
-        if not os.path.exists(self.s3_file):
-            return []
-        events = []
-        with open(self.s3_file, "r", encoding="utf-8") as f:
-            for line in f:
-                if line.strip():
-                    try:
-                        events.append(json.loads(line))
-                    except json.JSONDecodeError:
-                        continue
-        return events[-n:]
+        """获取最近 n 条 S3 事件（优先从内存缓存读）"""
+        with self._write_lock:
+            if self._recent_cache:
+                return list(self._recent_cache)[-n:]
+        return BrainMemory._fallback_read_recent(self.s3_file, n)

@@ -149,12 +149,17 @@ def _task_handle_user_timeout(loop):
 
 
 class ScenesoulLoop:
-    """白界主循环 — 管理双消息列表和驱动流程"""
+    """白界 CLI 控制器 — 负责后台任务调度 + 事件渲染
+
+    职责明确：
+    - 持有 Runtime（状态流转核心）和 Renderer（终端渲染）
+    - 管理后台 LLM 任务的提交、排队、结果处理
+    - 将 Runtime 产出的事件渲染到终端
+
+    状态访问：直接通过 loop.runtime.* 读写，不做代理转发。
+    """
 
     def __init__(self, brain, narrator, world, renderer, current_scene_name, profile_name="default"):
-        self.brain = brain
-        self.narrator = narrator
-        self.world = world
         self.renderer = renderer
 
         # 共享 Runtime（CLI/Web 共用）
@@ -171,71 +176,29 @@ class ScenesoulLoop:
         self._task_queue = queue.Queue()
         self._result_queue = queue.Queue()
 
+    # ── 兼容属性（供测试和外部代码平滑迁移，后续可移除） ──
+
     @property
     def brain_messages(self):
         return self.runtime.brain_messages
-
-    @brain_messages.setter
-    def brain_messages(self, value):
-        self.runtime.brain_messages = value
 
     @property
     def narrator_messages(self):
         return self.runtime.narrator_messages
 
-    @narrator_messages.setter
-    def narrator_messages(self, value):
-        self.runtime.narrator_messages = value
-
     @property
     def drives(self):
         return self.runtime.drives
-
-    @drives.setter
-    def drives(self, value):
-        self.runtime.drives = value
 
     @property
     def current_scene_name(self):
         return self.runtime.current_scene_name
 
-    @current_scene_name.setter
-    def current_scene_name(self, value):
-        self.runtime.current_scene_name = value
-
     @property
     def user_present(self):
         return self.runtime.user_present
 
-    @user_present.setter
-    def user_present(self, value):
-        self.runtime.user_present = value
-
-    @property
-    def sleep_mode(self):
-        return self.runtime.sleep_mode
-
-    @sleep_mode.setter
-    def sleep_mode(self, value):
-        self.runtime.sleep_mode = value
-
-    @property
-    def last_think_time(self):
-        return self.runtime.last_think_time
-
-    @last_think_time.setter
-    def last_think_time(self, value):
-        self.runtime.last_think_time = value
-
-    @property
-    def last_user_time(self):
-        return self.runtime.last_user_time
-
-    @last_user_time.setter
-    def last_user_time(self, value):
-        self.runtime.last_user_time = value
-
-    # ── 任务提交与结果排空 ──
+    # ── 后台任务调度 ──
 
     def _submit_task(self, task):
         """启动后台线程执行 LLM 任务"""
@@ -263,71 +226,59 @@ class ScenesoulLoop:
             except queue.Empty:
                 pass
 
+    # ── 事件渲染 ──
+
     def _render_events(self, events):
+        """将 Runtime 事件列表渲染到终端"""
         for event in events:
             event_type = event.get("type")
             content = event.get("content", "")
-            if event_type == "thought":
-                self.renderer.print_brain_thought(content)
-            elif event_type == "brain":
+            if event_type in ("thought", "brain"):
                 self.renderer.print_brain_thought(content)
             elif event_type == "narrator":
                 self.renderer.print_narration(content)
             elif event_type == "scene_change":
-                self.renderer.print_scene_change(event.get("scene_name", self.current_scene_name))
+                self.renderer.print_scene_change(
+                    event.get("scene_name", self.runtime.current_scene_name)
+                )
             elif event_type == "system":
                 self.renderer.print_system(content)
 
-    # ── Runtime 封装（同步） ──
+    # ── Runtime 操作 + 渲染（同步，供后台线程调用） ──
 
     def brain_think(self):
-        """大脑内心独白"""
+        """大脑内心独白（同步）"""
         thought = self.runtime.brain_think()
         self.renderer.print_brain_thought(thought)
         return thought
 
-    def brain_respond(self, user_input):
-        """大脑回应"""
-        reply = self.runtime.brain_respond(user_input)
-        self.renderer.print_brain_thought(reply)
-        return reply
-
     def narrator_observe(self, brain_thought):
-        """界说观测"""
+        """界说观测（同步）"""
         result = self.runtime.narrator_observe(brain_thought)
         if result.get("narration"):
             self.renderer.print_narration(result["narration"])
         if result.get("scene_changed"):
-            self.renderer.print_scene_change(self.current_scene_name)
-
+            self.renderer.print_scene_change(self.runtime.current_scene_name)
         return result
-
-    def narrator_inject_narration(self, narration):
-        """将界说的旁白直接追加到两个列表"""
-        self.runtime.narrator_inject_narration(narration)
-        self.renderer.print_narration(narration)
 
     def start_initial_scene(self):
         """初始场景触发（同步，启动时调用）"""
         events = self.runtime.start_initial_scene()
         self._render_events(events)
 
-    def run_inner_loop_sync(self):
-        result = self.runtime.run_inner_loop()
-        self._render_events(result.get("events", []))
-        return result
-
     def handle_user_input_sync(self, user_input):
+        """处理用户输入（同步，后台线程调用）"""
         result = self.runtime.handle_user_input(user_input)
         self._render_events(result.get("events", []))
         return result
 
     def handle_user_timeout_sync(self):
+        """处理用户超时（同步，后台线程调用）"""
         result = self.runtime.handle_user_timeout()
         self._render_events(result.get("events", []))
         return result
 
-    # ── 提交后台任务的包装器 ──
+    # ── 异步任务提交（主线程调用，不阻塞） ──
 
     def run_inner_loop(self):
         """提交内心独白任务到后台"""
@@ -343,8 +294,8 @@ class ScenesoulLoop:
 
     def handle_user_input(self, user_input):
         """用户输入：立即更新状态 + 提交后台任务"""
-        self.last_user_time = time.time()
-        self.user_present = True
+        self.runtime.last_user_time = time.time()
+        self.runtime.user_present = True
         self.renderer.print_user_message(user_input)
 
         if self.processing:
@@ -382,28 +333,31 @@ def run_cli(preset_name=None, debug=False):
     __main__._brain = brain
     __main__._narrator = narrator
 
-    # ── 构建初始场景 ──
+    # ── 构建初始场景（default 作为 Runtime 构造参数） ──
     initial_scene = world.get_default_scene()
-    current_scene_name = initial_scene.get("name", "卧室")
+    default_scene_name = initial_scene.get("name", "卧室")
 
-    # 显示世界设定
+    # ── 初始化主循环（Runtime 内部会从日志恢复 scene / drives） ──
+    loop = ScenesoulLoop(brain, narrator, world, renderer, default_scene_name, profile_name=profile_name)
+    __main__._loop = loop
+    rt = loop.runtime
+
+    # ── 显示世界设定 + 真实（恢复后）场景 ──
     from profiles.profile_loader import ProfileLoader
     _, world_body = ProfileLoader.load_world(profile_name)
     if world_body:
         renderer.print_system(world_body)
-    renderer.print_scene_change(current_scene_name)
-    scene_desc = initial_scene.get("description", "")
-    if scene_desc:
-        renderer.print_system(scene_desc)
-
-    # ── 初始化主循环 ──
-    loop = ScenesoulLoop(brain, narrator, world, renderer, current_scene_name, profile_name=profile_name)
-    __main__._loop = loop
+    renderer.print_scene_change(rt.current_scene_name)
+    # 只有当仍然停留在 default 场景时才展示其描述，避免与恢复场景冲突
+    if rt.current_scene_name == default_scene_name:
+        scene_desc = initial_scene.get("description", "")
+        if scene_desc:
+            renderer.print_system(scene_desc)
 
     # ── 初始触发（同步） ──
     loop.start_initial_scene()
     loop.run_inner_loop()
-    loop.last_think_time = time.time()
+    rt.last_think_time = time.time()
 
     # ── 主循环 ──
     POLL_INTERVAL = 0.05
@@ -425,29 +379,29 @@ def run_cli(preset_name=None, debug=False):
                             renderer.execute_command(user_text)
                         elif user_text:
                             loop.handle_user_input(user_text)
-                            loop.last_think_time = time.time()
+                            rt.last_think_time = time.time()
 
             now = time.time()
 
             # 3. Runtime 决策（超时 / 定时思考 / 睡眠）
             if not loop.processing:
-                decision = loop.runtime.get_idle_action(now=now)
+                decision = rt.get_idle_action(now=now)
                 action = decision.get("action")
                 if action == "user_timeout":
                     loop.handle_user_timeout()
-                    loop.last_think_time = now
+                    rt.last_think_time = now
                 elif action == "run_inner_loop":
-                    loop.sleep_mode = False
+                    rt.sleep_mode = False
                     loop.run_inner_loop()
-                    loop.last_think_time = now
+                    rt.last_think_time = now
                 elif action == "sleep":
                     renderer.print_system("夜深了，大脑渐渐进入沉睡……")
-                    thought = loop.runtime.enter_sleep_mode()
+                    thought = rt.enter_sleep_mode()
                     if thought:
                         renderer.print_brain_thought(thought)
-                    loop.last_think_time = now
+                    rt.last_think_time = now
                 elif action == "idle":
-                    loop.last_think_time = now
+                    rt.last_think_time = now
 
             time.sleep(POLL_INTERVAL)
 

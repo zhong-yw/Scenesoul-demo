@@ -29,6 +29,7 @@ python main.py --web --host 127.0.0.1 --port 5001  # Web 自定义地址/端口
 | `OPENAI_MODEL` | `ds-flash` | 模型名 |
 | `THINK_INTERVAL` | `10` | 大脑思考间隔（秒） |
 | `USER_TIMEOUT` | `600` | 用户超时判定（秒） |
+| `MEMORY_ENABLED` | `1` | 是否启用跨会话记忆写入与恢复（`0/false` 关闭） |
 
 使用 OpenAI 兼容 SDK，可对接 DeepSeek、Ollama、MiniMax 等服务。
 

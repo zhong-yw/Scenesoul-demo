@@ -239,6 +239,7 @@ class ProfileLoader:
         parts.append("- 创建新场景时：输出世界消息 + 调用 update_scene() 写入 scene.md")
         parts.append("- 已有场景非关键变化：仅输出世界消息")
         parts.append("- 关键持久状态变化：输出世界消息 + update_scene() 更新 scene.md")
+        parts.append("- 物件级状态变化（如灯亮灭、水壶空满）：调用 update_scene_objects() 更新对象层")
         parts.append("- update_scene() 的 description 只写场景本身的持久状态（氛围、布置、光线、气味），不写大脑的行动或进入方式")
 
         # ── 驱动力管理 ──

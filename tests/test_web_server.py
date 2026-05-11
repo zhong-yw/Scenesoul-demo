@@ -48,6 +48,31 @@ class TestWebAPI:
         data = resp.get_json()
         assert data["error"] == "消息不能为空"
 
+    def test_api_status_returns_world_data(self, client):
+        from ui import web_server
+
+        mock_runtime = MagicMock()
+        mock_runtime.get_status.return_value = {
+            "scene": "卧室",
+            "last_thought": "在看窗外",
+            "drives": {"温柔": 80},
+            "user_present": True,
+            "memory_summary": "最近你在读书。",
+            "world": {
+                "scene": "卧室",
+                "version": 2,
+                "objects": [{"id": "lamp", "state": "亮"}],
+                "recent_changes": [{"op": "upsert", "id": "lamp"}],
+            },
+        }
+        web_server.runtime = mock_runtime
+
+        resp = client.get("/api/status")
+        data = resp.get_json()
+        assert data["brain"]["scene"] == "卧室"
+        assert data["world"]["scene"] == "卧室"
+        assert data["world"]["objects"][0]["id"] == "lamp"
+
     def test_api_send_success(self, client):
         from ui import web_server
 

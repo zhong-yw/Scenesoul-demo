@@ -1,5 +1,8 @@
 """CLI InputLine 纯函数测试"""
 
+import __main__
+from types import SimpleNamespace
+
 import pytest
 from ui.cli_renderer import InputLine, CliRenderer
 
@@ -164,3 +167,19 @@ class TestCliRenderer:
         r.print_brain_thought("a")
         r.print_brain_thought("b")
         assert "╌" not in capsys.readouterr().out
+
+    def test_execute_status_shows_dynamic_drives(self, capsys, monkeypatch):
+        r = CliRenderer()
+        loop = SimpleNamespace(
+            current_scene_name="书房",
+            drives={"温柔": 90, "好奇": 70},
+            user_present=True,
+        )
+        monkeypatch.setattr(__main__, "_loop", loop, raising=False)
+
+        assert r.execute_command("/status") is True
+        output = capsys.readouterr().out
+        assert "当前场景：书房" in output
+        assert "温柔 90" in output
+        assert "好奇 70" in output
+        assert "用户在线：是" in output

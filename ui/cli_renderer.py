@@ -317,11 +317,15 @@ class CliRenderer:
             import __main__
             loop = getattr(__main__, "_loop", None)
             if loop:
+                # 拷贝一份避免后台线程同时写入导致 RuntimeError
+                drives = dict(getattr(loop, "drives", {}) or {})
+                if drives:
+                    drives_text = " | ".join(f"{k} {v}" for k, v in drives.items())
+                else:
+                    drives_text = "无"
                 self.write_output(
                     f"当前场景：{loop.current_scene_name}\n"
-                    f"驱动力：饥饿 {loop.drives.get('hunger', 0)} | "
-                    f"疲劳 {loop.drives.get('fatigue', 0)} | "
-                    f"好奇 {loop.drives.get('curiosity', 0)}\n"
+                    f"驱动力：{drives_text}\n"
                     f"用户在线：{'是' if loop.user_present else '否'}",
                     self.TYPE_SYSTEM, _DIM
                 )

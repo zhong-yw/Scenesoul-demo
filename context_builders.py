@@ -26,6 +26,13 @@ TRIM_TARGET = 16_000
 MIN_ROUNDS = 2
 
 
+def _append_memory_summary(system_content, memory_summary):
+    summary = (memory_summary or "").strip()
+    if not summary:
+        return system_content
+    return f"{system_content}\n\n【近期记忆摘要】\n{summary}"
+
+
 # ── Brain Context Builder ──
 
 class BrainContextBuilder:
@@ -45,13 +52,14 @@ class BrainContextBuilder:
         from profiles.profile_loader import ProfileLoader
         return ProfileLoader.build_brain_system_prompt(self.profile_name)
 
-    def build_think_context(self, messages, drives=None, current_scene_info=None):
+    def build_think_context(self, messages, drives=None, current_scene_info=None, memory_summary=None):
         """构建大脑的 LLM 上下文
 
         参数:
             messages: 外部传入的消息列表（已有 system，后续追加 user/assistant）
             drives: 当前驱动力字典 {hunger, fatigue, curiosity}
             current_scene_info: {name, description}
+            memory_summary: 最近记忆摘要文本（可选）
 
         返回:
             完整的 messages 列表（含本轮最新的【当前状态】）
@@ -62,6 +70,7 @@ class BrainContextBuilder:
         # 重写 system 中的【当前状态】和【世界的场景】
         system_content = self._build_system_prompt()
         system_content = self._rewrite_state_fields(system_content, drives, current_scene_info)
+        system_content = _append_memory_summary(system_content, memory_summary)
 
         context = list(messages)
         # 替换第一条（system）
@@ -109,9 +118,14 @@ class BrainContextBuilder:
                 new_lines.append(scenes_block)
                 continue
             if skip_state:
-                if stripped.startswith("时间:") or stripped.startswith("场景:") or stripped.startswith("驱动力:"):
+                # 清理旧状态区块：兼容中英文冒号与模板占位，直到空行或下一个章节
+                if stripped.startswith("【"):
+                    skip_state = False
+                elif not stripped:
+                    skip_state = False
                     continue
-                skip_state = False
+                else:
+                    continue
             if skip_scenes:
                 if not stripped:
                     skip_scenes = False
@@ -132,7 +146,7 @@ class BrainContextBuilder:
             for name, desc in scenes.items():
                 parts.append(f"{name}——{desc}")
             return "\n".join(parts)
-        except Exception:
+        except (OSError, ImportError, AttributeError, ValueError):
             return "（暂无场景）"
 
     def _trim_messages(self, messages):
@@ -161,11 +175,12 @@ class NarratorContextBuilder:
         from profiles.profile_loader import ProfileLoader
         return ProfileLoader.build_narrator_system_prompt(self.profile_name)
 
-    def build_context(self, messages):
+    def build_context(self, messages, memory_summary=None):
         """构建界说的 LLM 上下文
 
         参数:
             messages: 外部传入的界说消息列表（已有 system + 对话历史，含本轮 user 消息）
+            memory_summary: 最近记忆摘要文本（可选）
 
         返回:
             完整的 messages 列表（用于 LLM 调用）
@@ -175,6 +190,7 @@ class NarratorContextBuilder:
 
         context = list(messages)
         system = self._get_narrator_system_prompt()
+        system = _append_memory_summary(system, memory_summary)
 
         # 确保 system 在第一条
         if context and context[0]["role"] == "system":

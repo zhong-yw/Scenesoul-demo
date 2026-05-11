@@ -102,10 +102,12 @@ def api_status():
             "last_thought": status["last_thought"],
             "drives": status["drives"],
             "user_present": status["user_present"],
+            "memory_summary": status.get("memory_summary", ""),
         },
         "narrator": {
             "scene": status["scene"],
         },
+        "world": status.get("world", {"scene": status["scene"], "objects": [], "recent_changes": [], "version": 0}),
         "conversation": conversation_log[-20:],
     })
 

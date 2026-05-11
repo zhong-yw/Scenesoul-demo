@@ -19,6 +19,7 @@
 | `OPENAI_MODEL` | 无 | 模型名（必填） |
 | `THINK_INTERVAL` | `10` | Runtime 空闲思考间隔（秒） |
 | `USER_TIMEOUT` | `600` | 判定用户离场超时（秒） |
+| `MEMORY_ENABLED` | `1` | 是否启用记忆落盘与启动恢复（`0/false` 关闭） |
 | `WORLD_PRESET` | `default` | 未显式传参时的预设回退 |
 
 ### `.env` 完整模板
@@ -32,6 +33,7 @@ OPENAI_MODEL=ds-flash
 # ===== Runtime 行为配置（可选）=====
 THINK_INTERVAL=10
 USER_TIMEOUT=600
+MEMORY_ENABLED=1
 
 # ===== 预设回退（可选）=====
 WORLD_PRESET=default

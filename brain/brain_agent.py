@@ -22,13 +22,14 @@ class BrainAgent:
         self.ctx = BrainContextBuilder(profile_name=profile_name or "default")
         self.last_thought = ""
 
-    def internal_think(self, messages, drives=None, current_scene_info=None):
+    def internal_think(self, messages, drives=None, current_scene_info=None, memory_summary=None):
         """大脑内心独白
 
         参数:
             messages: 大脑消息列表（system + 之前的对话历史）
             drives: 当前驱动力
             current_scene_info: {name, description}
+            memory_summary: 最近记忆摘要（可选）
 
         返回:
             内心独白文本
@@ -37,6 +38,7 @@ class BrainAgent:
             messages=messages,
             drives=drives,
             current_scene_info=current_scene_info,
+            memory_summary=memory_summary,
         )
         try:
             response = self.llm.chat(context)
@@ -47,7 +49,7 @@ class BrainAgent:
         except Exception:
             return "……（静静沉思着）"
 
-    def respond(self, messages, user_input, drives=None, current_scene_info=None):
+    def respond(self, messages, user_input, drives=None, current_scene_info=None, memory_summary=None):
         """大脑对用户回应
 
         参数:
@@ -55,6 +57,7 @@ class BrainAgent:
             user_input: 用户消息内容（仅用于日志，不重复追加到 context）
             drives: 当前驱动力
             current_scene_info: {name, description}
+            memory_summary: 最近记忆摘要（可选）
 
         返回:
             回应文本
@@ -64,6 +67,7 @@ class BrainAgent:
             messages=messages,
             drives=drives,
             current_scene_info=current_scene_info,
+            memory_summary=memory_summary,
         )
         try:
             response = self.llm.chat(context)

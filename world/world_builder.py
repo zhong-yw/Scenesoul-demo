@@ -2,7 +2,8 @@
 
 import json
 import os
-from datetime import datetime
+
+from world.scene_objects import SceneObjectStore
 
 
 class WorldBuilder:
@@ -24,6 +25,7 @@ class WorldBuilder:
 
         # 场景缓存
         self._scene_collection = {}
+        self.scene_objects = SceneObjectStore(profile_name=self._profile_name or "default")
         if self._profile_name:
             self.refresh_scene_cache()
 
@@ -40,7 +42,7 @@ class WorldBuilder:
         try:
             from profiles.profile_loader import ProfileLoader
             return name if ProfileLoader.profile_exists(name) else None
-        except Exception:
+        except (ImportError, AttributeError):
             return None
 
     def is_profile_mode(self):
@@ -147,3 +149,9 @@ class WorldBuilder:
         self.refresh_scene_cache()
 
         return {"success": True, "is_new": is_new}
+
+    def apply_scene_object_ops(self, scene_name, operations):
+        return self.scene_objects.apply_operations(scene_name, operations)
+
+    def get_scene_object_snapshot(self, scene_name):
+        return self.scene_objects.get_scene_snapshot(scene_name)

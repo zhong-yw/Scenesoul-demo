@@ -23,8 +23,8 @@ def mock_brain():
 @pytest.fixture
 def mock_narrator():
     narrator = MagicMock()
-    narrator.handle_user_arrival.return_value = ("你推开门走了进来。", None, None, None)
-    narrator.handle_user_message.return_value = ("你点了点头。", None, None, None)
+    narrator.handle_user_arrival.return_value = ("你推开门走了进来。", None, None, None, None)
+    narrator.handle_user_message.return_value = ("你点了点头。", None, None, None, None)
     narrator.handle_user_leave.return_value = "你转身离开了。"
     narrator.observe.return_value = {"action": "observe", "narration": "阳光洒进来。", "tool_call": None, "drives_update": None}
     return narrator
@@ -55,11 +55,11 @@ class TestScenesoulLoop:
 
         mock_narrator.handle_user_arrival.assert_called_once()
         # brain.respond 在后台任务中调用，不在主线程
-        assert loop.user_present is True
+        assert loop.runtime.user_present is True
 
     def test_subsequent_message_flow(self, loop, mock_narrator, mock_brain):
         """后续交互触发 handle_user_message"""
-        loop.narrator_messages.append({"role": "assistant", "content": "上次旁白"})
+        loop.runtime.narrator_messages.append({"role": "assistant", "content": "上次旁白"})
 
         loop.handle_user_input("继续说")
 
@@ -68,25 +68,25 @@ class TestScenesoulLoop:
 
     def test_user_timeout(self, loop, mock_narrator):
         """用户超时触发 handle_user_leave"""
-        loop.user_present = True
-        loop.last_user_time = 0
+        loop.runtime.user_present = True
+        loop.runtime.last_user_time = 0
 
         loop.handle_user_timeout()
 
-        assert loop.user_present is False
+        assert loop.runtime.user_present is False
         mock_narrator.handle_user_leave.assert_called_once()
 
     def test_sleep_mode_set_on_night_fatigue(self, loop):
         """夜间高疲劳进入睡眠模式"""
         import time
         # 查找疲劳相关驱动力
-        for k in loop.drives:
+        for k in loop.runtime.drives:
             if "疲" in k:
-                loop.drives[k] = 85
+                loop.runtime.drives[k] = 85
                 break
         else:
             pytest.skip("当前 profile 无疲劳驱动力")
-        loop.last_think_time = 0
+        loop.runtime.last_think_time = 0
 
         # 模拟夜间（hour >= 21）
         with patch("main.time") as mock_time:
@@ -99,30 +99,30 @@ class TestScenesoulLoop:
 
     def test_drives_from_profile(self, loop):
         """驱动力从 soul.md traits 读取"""
-        assert "温柔" in loop.drives
-        assert "好奇" in loop.drives
-        assert isinstance(loop.drives["温柔"], int)
+        assert "温柔" in loop.runtime.drives
+        assert "好奇" in loop.runtime.drives
+        assert isinstance(loop.runtime.drives["温柔"], int)
 
     def test_narrator_observe_appends_to_both_lists(self, loop, mock_narrator):
         """narrator_observe 同时追加到两个消息列表"""
         loop.narrator_observe("测试独白")
 
         # narrator_messages 应有 user + assistant
-        assert any(m["role"] == "user" and m["content"] == "测试独白" for m in loop.narrator_messages)
-        assert any(m["role"] == "assistant" for m in loop.narrator_messages)
+        assert any(m["role"] == "user" and m["content"] == "测试独白" for m in loop.runtime.narrator_messages)
+        assert any(m["role"] == "assistant" for m in loop.runtime.narrator_messages)
         # brain_messages 应有带状态头部的 user 消息
-        assert any(m["role"] == "user" and "[当前状态]" in m["content"] for m in loop.brain_messages)
+        assert any(m["role"] == "user" and "[当前状态]" in m["content"] for m in loop.runtime.brain_messages)
 
     def test_narrator_observe_silent_returns_early(self, loop, mock_narrator):
         """界说静默时不追加消息"""
         mock_narrator.observe.return_value = {"action": "silent", "narration": None, "tool_call": None, "drives_update": None}
-        before_n = len(loop.narrator_messages)
-        before_b = len(loop.brain_messages)
+        before_n = len(loop.runtime.narrator_messages)
+        before_b = len(loop.runtime.brain_messages)
 
         loop.narrator_observe("独白")
 
-        assert len(loop.narrator_messages) == before_n + 1  # 只追加了 user
-        assert len(loop.brain_messages) == before_b
+        assert len(loop.runtime.narrator_messages) == before_n + 1  # 只追加了 user
+        assert len(loop.runtime.brain_messages) == before_b
 
     def test_scene_change_updates_current_scene(self, loop, mock_narrator, mock_world):
         """场景切换更新 current_scene_name"""
@@ -135,7 +135,7 @@ class TestScenesoulLoop:
 
         loop.narrator_observe("想去厨房")
 
-        assert loop.current_scene_name == "厨房"
+        assert loop.runtime.current_scene_name == "厨房"
 
     def test_tool_call_writes_to_narrator_messages(self, loop, mock_narrator, mock_world):
         """tool_call 结果追加到 narrator_messages"""
@@ -148,5 +148,5 @@ class TestScenesoulLoop:
 
         loop.narrator_observe("去书房")
 
-        tool_msgs = [m for m in loop.narrator_messages if m["role"] == "tool"]
+        tool_msgs = [m for m in loop.runtime.narrator_messages if m["role"] == "tool"]
         assert len(tool_msgs) == 1

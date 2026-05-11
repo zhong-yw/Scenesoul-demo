@@ -1,6 +1,7 @@
 """NarratorAgent 测试 — v0.5 双消息列表架构"""
 
 import pytest
+from unittest.mock import MagicMock
 from narrator.narrator_agent import NarratorAgent
 
 
@@ -70,6 +71,29 @@ class TestObserve:
         result = agent.observe([])
         assert result["action"] == "silent"
 
+    def test_scene_objects_tool_call(self):
+        mock_llm = MagicMock()
+        mock_llm.chat_with_tools.return_value = {
+            "content": "你按亮了台灯。",
+            "tool_calls": [{
+                "id": "call_1",
+                "function": {
+                    "name": "update_scene_objects",
+                    "arguments": "{\"scene_name\":\"卧室\",\"operations\":[{\"op\":\"upsert\",\"id\":\"lamp\",\"patch\":{\"state\":\"亮\"}}]}",
+                },
+            }],
+            "model": "mock-model",
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+        }
+        agent = NarratorAgent(mock_llm)
+        messages = [
+            {"role": "system", "content": "你是界说。"},
+            {"role": "user", "content": "想开灯"},
+        ]
+        result = agent.observe(messages)
+        assert result["scene_objects_update"]["scene_name"] == "卧室"
+        assert result["scene_objects_update"]["operations"][0]["id"] == "lamp"
+
 
 class TestUserInteraction:
     """用户交互方法测试"""
@@ -77,38 +101,42 @@ class TestUserInteraction:
     def test_arrival_success(self, mock_llm):
         agent = NarratorAgent(mock_llm)
         messages = [{"role": "system", "content": "你是界说。"}]
-        text, scene, tool_call, drives_update = agent.handle_user_arrival(messages, "你好")
+        text, scene, tool_call, drives_update, scene_objects_update = agent.handle_user_arrival(messages, "你好")
         assert text == "mock response"
         assert scene is None
         assert tool_call is None
         assert drives_update is None
+        assert scene_objects_update is None
 
     def test_arrival_error(self, mock_llm_error):
         agent = NarratorAgent(mock_llm_error)
         messages = [{"role": "system", "content": "你是界说。"}]
-        text, scene, tool_call, drives_update = agent.handle_user_arrival(messages, "你好")
+        text, scene, tool_call, drives_update, scene_objects_update = agent.handle_user_arrival(messages, "你好")
         assert text == "有人轻轻走了过来。"
         assert scene is None
         assert tool_call is None
         assert drives_update is None
+        assert scene_objects_update is None
 
     def test_message_success(self, mock_llm):
         agent = NarratorAgent(mock_llm)
         messages = [{"role": "system", "content": "你是界说。"}]
-        text, scene, tool_call, drives_update = agent.handle_user_message(messages, "然后呢")
+        text, scene, tool_call, drives_update, scene_objects_update = agent.handle_user_message(messages, "然后呢")
         assert text == "mock response"
         assert scene is None
         assert tool_call is None
         assert drives_update is None
+        assert scene_objects_update is None
 
     def test_message_error(self, mock_llm_error):
         agent = NarratorAgent(mock_llm_error)
         messages = [{"role": "system", "content": "你是界说。"}]
-        text, scene, tool_call, drives_update = agent.handle_user_message(messages, "然后呢")
+        text, scene, tool_call, drives_update, scene_objects_update = agent.handle_user_message(messages, "然后呢")
         assert text == ""
         assert scene is None
         assert tool_call is None
         assert drives_update is None
+        assert scene_objects_update is None
 
     def test_leave(self, mock_llm):
         agent = NarratorAgent(mock_llm)

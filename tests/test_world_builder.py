@@ -1,7 +1,7 @@
 """WorldBuilder 测试"""
 
 import json
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from world.world_builder import WorldBuilder
@@ -93,3 +93,23 @@ class TestProfileMode:
         """未指定 preset 时默认使用 default profile"""
         assert world_builder.is_profile_mode() is True
         assert world_builder.get_profile_name() == "default"
+
+
+class TestSceneObjects:
+    def test_apply_scene_object_ops_delegates_store(self, world_builder):
+        world_builder.scene_objects = MagicMock()
+        world_builder.scene_objects.apply_operations.return_value = {"success": True}
+
+        result = world_builder.apply_scene_object_ops("卧室", [{"op": "upsert", "id": "lamp", "patch": {"state": "亮"}}])
+
+        assert result["success"] is True
+        world_builder.scene_objects.apply_operations.assert_called_once()
+
+    def test_get_scene_object_snapshot_delegates_store(self, world_builder):
+        world_builder.scene_objects = MagicMock()
+        world_builder.scene_objects.get_scene_snapshot.return_value = {"scene": "卧室", "objects": []}
+
+        result = world_builder.get_scene_object_snapshot("卧室")
+
+        assert result["scene"] == "卧室"
+        world_builder.scene_objects.get_scene_snapshot.assert_called_once_with("卧室")

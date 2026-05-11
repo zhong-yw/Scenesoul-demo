@@ -42,6 +42,31 @@ class TestBuildThinkContext:
         assert "旧场景" not in system
         assert "旧驱动力" not in system
 
+    def test_system_prompt_clears_state_placeholders(self, brain_builder):
+        """系统模板中的状态占位符应被完整清理"""
+        messages = [{"role": "system", "content": "sys"}]
+        result = brain_builder.build_think_context(
+            messages=messages,
+            drives={"温柔": 80, "好奇": 20},
+            current_scene_info={"name": "厨房", "description": ""},
+        )
+        system = result[0]["content"]
+        assert "时间：{当前时间}" not in system
+        assert "场景：{当前场景名}" not in system
+        assert "驱动力：{驱动力数值}" not in system
+
+    def test_memory_summary_injected_into_system(self, brain_builder):
+        messages = [{"role": "system", "content": "sys"}]
+        result = brain_builder.build_think_context(
+            messages=messages,
+            drives={"温柔": 60, "好奇": 55},
+            current_scene_info={"name": "卧室", "description": ""},
+            memory_summary="- [大脑/brain_reply] 你刚刚说了你好",
+        )
+        system = result[0]["content"]
+        assert "【近期记忆摘要】" in system
+        assert "你刚刚说了你好" in system
+
     def test_default_drives(self, brain_builder):
         """未传 drives 时使用默认值"""
         messages = [{"role": "system", "content": "【当前状态】\n时间：旧\n场景：旧\n驱动力：旧"}]

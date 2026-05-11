@@ -1,6 +1,6 @@
 # HTTP API 参考
 > Status: [Implemented]  
-> Last Reviewed: 2026-05-08
+> Last Reviewed: 2026-05-11
 
 基于 `ui/web_server.py`（Flask）。
 
@@ -18,9 +18,16 @@
     "scene": "卧室",
     "last_thought": "...",
     "drives": {"温柔": 50, "好奇": 50},
-    "user_present": false
+    "user_present": false,
+    "memory_summary": "- [大脑/brain_reply] ..."
   },
   "narrator": {"scene": "卧室"},
+  "world": {
+    "scene": "卧室",
+    "version": 3,
+    "objects": [{"id": "lamp", "state": "亮"}],
+    "recent_changes": [{"op": "upsert", "id": "lamp"}]
+  },
   "conversation": []
 }
 ```

@@ -1,11 +1,13 @@
 # 🔌 LLM 客户端 — 调用 OpenAI 兼容 API
 
 import json
+import logging
 import os
 from openai import OpenAI
 from dotenv import load_dotenv
 
 load_dotenv()
+logger = logging.getLogger(__name__)
 
 
 class LLMClient:
@@ -81,8 +83,8 @@ class LLMClient:
                     "completion_tokens": response.usage.completion_tokens if response.usage else 0
                 }
             }
-        except Exception as e:
-            print(f"❌ LLM 调用失败: {e}")
+        except Exception:
+            logger.exception("LLM 调用失败")
             raise
 
     def chat_with_tools(self, messages, tools, max_tokens=16000, temperature=0.7):
@@ -120,6 +122,6 @@ class LLMClient:
 
             return result
 
-        except Exception as e:
-            print(f"❌ LLM 工具调用失败: {e}")
+        except Exception:
+            logger.exception("LLM 工具调用失败")
             raise

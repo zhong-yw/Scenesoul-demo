@@ -9,6 +9,7 @@ import pytest
 
 PROJECT_ROOT = os.path.join(os.path.dirname(__file__), "..")
 sys.path.insert(0, PROJECT_ROOT)
+os.environ["MEMORY_ENABLED"] = "0"
 
 from context_builders import _estimate_tokens, BrainContextBuilder, NarratorContextBuilder
 from brain.brain_agent import BrainAgent

@@ -38,6 +38,18 @@ class TestBuildContext:
         result = narrator_builder.build_context(messages)
         assert result[0]["content"] != "旧 system"
 
+    def test_memory_summary_injected_into_system(self, narrator_builder):
+        messages = [
+            {"role": "system", "content": "旧 system"},
+            {"role": "user", "content": "独白"},
+        ]
+        result = narrator_builder.build_context(
+            messages,
+            memory_summary="- [界说/scene_change] 场景切换到 厨房",
+        )
+        assert "【近期记忆摘要】" in result[0]["content"]
+        assert "场景切换到 厨房" in result[0]["content"]
+
 
 class TestTrimMessages:
     """_trim_messages 裁剪测试"""
