@@ -1,9 +1,12 @@
 import json
 import os
 import time
+import logging
 
 from context_builders import build_state_header
 from profiles.profile_loader import ProfileLoader
+
+logger = logging.getLogger(__name__)
 
 
 class ScenesoulRuntime:
@@ -28,6 +31,7 @@ class ScenesoulRuntime:
         self.think_interval = int(os.getenv("THINK_INTERVAL", "10"))
         self.user_timeout = int(os.getenv("USER_TIMEOUT", "600"))
         self.memory_enabled = os.getenv("MEMORY_ENABLED", "1").strip().lower() not in ("0", "false", "off", "no")
+        self.memory = None
         self.brain_memory = None
         self.narrator_memory = None
         if self.memory_enabled:
@@ -39,78 +43,100 @@ class ScenesoulRuntime:
 
     def _init_memory(self):
         try:
-            from memory.memory_system import BrainMemory, NarratorMemory
-            self.brain_memory = BrainMemory()
-            self.narrator_memory = NarratorMemory()
+            from memory.memory_system import BrainMemory, NarratorMemory, MemorySystem
+            from memory.config import MemoryConfig
+            from memory.retriever import RetrievalContext
+
+            cfg = MemoryConfig.from_env(os.environ)
+            self.memory = MemorySystem(profile=self.profile_name, cfg=cfg)
+            # v0.7: 所有操作通过 MemorySystem facade
+            # v0.6 兼容引用保留为 None（测试可直接设置）
+            self.brain_memory = None
+            self.narrator_memory = None
             self._restore_state_from_logs()
             self._sync_memory_snapshots()
         except (OSError, ImportError) as e:
-            # 记忆目录不可写或模块缺失：降级为无记忆模式，不影响核心流程
-            import logging
-            logging.getLogger(__name__).warning(
-                "Memory init failed, running without memory: %s", e
-            )
+            logger.warning("Memory init failed, running without memory: %s", e)
             self.memory_enabled = False
+            self.memory = None
             self.brain_memory = None
             self.narrator_memory = None
 
     def _memory_is_ready(self):
+        # v0.7: 优先检查 MemorySystem；v0.6 兼容：检查旧的 brain_memory/narrator_memory
+        if self.memory is not None:
+            return self.memory_enabled
         return self.memory_enabled and self.brain_memory is not None and self.narrator_memory is not None
 
     def _sync_memory_snapshots(self):
         if not self._memory_is_ready():
             return
-        self.brain_memory.update_l1("current_scene", self.current_scene_name)
-        self.brain_memory.update_l1("user_present", self.user_present)
-        self.brain_memory.update_l1("drives", dict(self.drives))
-        self.narrator_memory.s1["current_scene"] = self.current_scene_name
+        if self.memory is not None:
+            self.memory.sync_state(self.current_scene_name, self.user_present, dict(self.drives))
+        else:
+            # v0.6 兜底
+            self.brain_memory.update_l1("current_scene", self.current_scene_name)
+            self.brain_memory.update_l1("user_present", self.user_present)
+            self.brain_memory.update_l1("drives", dict(self.drives))
+            self.narrator_memory.s1["current_scene"] = self.current_scene_name
 
     def _log_brain_event(self, event_type, content, weight=1):
         if not self._memory_is_ready():
             return
         payload = content if isinstance(content, str) else json.dumps(content, ensure_ascii=False)
-        self.brain_memory.log_l2(event_type, payload, emotion_weight=weight)
+        if self.memory is not None:
+            self.memory.log_brain(event_type, payload, weight=weight)
+        else:
+            self.brain_memory.log_l2(event_type, payload, emotion_weight=weight)
 
     def _log_narrator_event(self, event_type, description):
         if not self._memory_is_ready():
             return
-        self.narrator_memory.log_event(event_type, description)
+        if self.memory is not None:
+            self.memory.log_narrator(event_type, description)
+        else:
+            self.narrator_memory.log_event(event_type, description)
 
-    def _build_recent_memory_summary(self, max_items=5):
+    def _build_recent_memory_summary(self, max_items=5, view="brain", ctx=None):
+        """构建近期记忆摘要。
+
+        v0.7 委派给 MemorySystem.build_summary；max_items 参数保留兼容但不再控制上限。
+        v0.6 回退：当 self.memory 不存在时使用旧的 brain_memory/narrator_memory 合并。
+        """
         if not self._memory_is_ready():
             return ""
 
-        # 拉取两边各 max_items 条，按时间戳合并 + 去空 + 取最近 max_items 条
+        # v0.7 路径
+        if self.memory is not None:
+            from memory.retriever import RetrievalContext
+            if ctx is None:
+                ctx = RetrievalContext(
+                    current_scene=self.current_scene_name,
+                    last_thought=getattr(self.brain, "last_thought", ""),
+                )
+            text = self.memory.build_summary(view, ctx)
+            logger.debug(
+                "Memory summary built: view=%s, len=%d, ctx=%s",
+                view, len(text), "empty" if ctx.is_empty() else "has_keywords",
+            )
+            return text
+
+        # v0.6 回退路径
         brain_logs = self.brain_memory.get_recent_logs(max_items)
         narrator_events = self.narrator_memory.get_recent_events(max_items)
-
         combined = []
         for e in brain_logs:
             content = str(e.get("content", "")).strip()
             if not content:
                 continue
-            combined.append((
-                e.get("timestamp", ""),
-                "大脑",
-                e.get("type", "brain"),
-                content,
-            ))
+            combined.append((e.get("timestamp", ""), "大脑", e.get("type", "brain"), content))
         for e in narrator_events:
             content = str(e.get("description", "")).strip()
             if not content:
                 continue
-            combined.append((
-                e.get("timestamp", ""),
-                "界说",
-                e.get("type", "event"),
-                content,
-            ))
-
-        combined.sort(key=lambda x: x[0])  # 按时间戳升序；空戳会排到最前
-        lines = [
-            f"- [{src}/{etype}] {content[:80]}"
-            for _, src, etype, content in combined[-max_items:]
-        ]
+            combined.append((e.get("timestamp", ""), "界说", e.get("type", "event"), content))
+        combined.sort(key=lambda x: x[0])
+        lines = [f"- [{src}/{etype}] {content[:80]}" for _, src, etype, content in combined[-max_items:]]
         return "\n".join(lines)
 
     def _get_world_objects_status(self):
@@ -138,20 +164,32 @@ class ScenesoulRuntime:
         if not self._memory_is_ready():
             return
 
+        if self.memory is not None:
+            restored = self.memory.restore_state()
+            if restored["current_scene"]:
+                self.current_scene_name = restored["current_scene"]
+            if isinstance(restored["drives"], dict):
+                for k, v in restored["drives"].items():
+                    if isinstance(v, (int, float)):
+                        self.drives[k] = v
+                self._clamp_drives()
+            return
+
+        # v0.6 兜底
         recent_events = self.narrator_memory.get_recent_events(30)
         for entry in reversed(recent_events):
             desc = str(entry.get("description", "")).strip()
             if not desc:
                 continue
             if "场景切换到" in desc:
-                restored = desc.split("场景切换到", 1)[-1].strip("：: ")
-                if restored:
-                    self.current_scene_name = restored
+                restored_scene = desc.split("场景切换到", 1)[-1].strip("：: ")
+                if restored_scene:
+                    self.current_scene_name = restored_scene
                     break
             if desc.startswith("场景更新:"):
-                restored = desc.split("场景更新:", 1)[-1].split("-", 1)[0].strip()
-                if restored:
-                    self.current_scene_name = restored
+                restored_scene = desc.split("场景更新:", 1)[-1].split("-", 1)[0].strip()
+                if restored_scene:
+                    self.current_scene_name = restored_scene
                     break
 
         recent_brain_logs = self.brain_memory.get_recent_logs(50)
@@ -177,8 +215,17 @@ class ScenesoulRuntime:
             self._clamp_drives()
             break
 
+    def _make_ctx(self, user_input=""):
+        """构造当前回合的 RetrievalContext。"""
+        from memory.retriever import RetrievalContext
+        return RetrievalContext(
+            current_scene=self.current_scene_name,
+            last_thought=getattr(self.brain, "last_thought", ""),
+            user_input=user_input,
+        )
+
     def brain_think(self):
-        memory_summary = self._build_recent_memory_summary()
+        memory_summary = self._build_recent_memory_summary(view="brain", ctx=self._make_ctx())
         thought = self.brain.internal_think(
             messages=self.brain_messages,
             drives=self.drives,
@@ -191,7 +238,7 @@ class ScenesoulRuntime:
         return thought
 
     def brain_respond(self, user_input):
-        memory_summary = self._build_recent_memory_summary()
+        memory_summary = self._build_recent_memory_summary(view="brain", ctx=self._make_ctx(user_input))
         reply = self.brain.respond(
             messages=self.brain_messages,
             user_input=user_input,
@@ -209,7 +256,7 @@ class ScenesoulRuntime:
         prev_scene = self.current_scene_name
         result = self.narrator.observe(
             self.narrator_messages,
-            memory_summary=self._build_recent_memory_summary(),
+            memory_summary=self._build_recent_memory_summary(view="narrator", ctx=self._make_ctx()),
         )
 
         has_tool_updates = bool(
@@ -332,7 +379,7 @@ class ScenesoulRuntime:
         self.narrator_messages.append({"role": "user", "content": ""})
         result = self.narrator.observe(
             self.narrator_messages,
-            memory_summary=self._build_recent_memory_summary(),
+            memory_summary=self._build_recent_memory_summary(view="narrator", ctx=self._make_ctx()),
         )
         if result.get("narration"):
             narrator_output = result["narration"]
@@ -375,21 +422,29 @@ class ScenesoulRuntime:
         self.last_user_time = time.time()
         self.user_present = True
         prev_scene = self.current_scene_name
-        self._log_brain_event("user_input", user_input, weight=2)
 
+        # v0.7: 使用 MemorySystem.log_user_input 处理 PII + 关系记忆
+        ctx = self._make_ctx(user_input)
+        if self._memory_is_ready():
+            written_text, redaction = self.memory.log_user_input(user_input, user_id="default")
+        else:
+            self._log_brain_event("user_input", user_input, weight=2)
+            written_text = user_input
+
+        memory_summary_narrator = self._build_recent_memory_summary(view="narrator", ctx=ctx)
         if not self.narrator_messages:
             narration, new_scene, tool_call, drives_update, scene_objects_update = self.narrator.handle_user_arrival(
                 self.narrator_messages,
                 user_input,
                 self.brain.last_thought,
-                memory_summary=self._build_recent_memory_summary(),
+                memory_summary=memory_summary_narrator,
             )
         else:
             narration, new_scene, tool_call, drives_update, scene_objects_update = self.narrator.handle_user_message(
                 self.narrator_messages,
                 user_input,
                 self.brain.last_thought,
-                memory_summary=self._build_recent_memory_summary(),
+                memory_summary=memory_summary_narrator,
             )
 
         if tool_call:
@@ -443,7 +498,7 @@ class ScenesoulRuntime:
 
         leave_narration = self.narrator.handle_user_leave(
             self.narrator_messages,
-            memory_summary=self._build_recent_memory_summary(),
+            memory_summary=self._build_recent_memory_summary(view="narrator", ctx=self._make_ctx()),
         )
         if leave_narration:
             self.narrator_inject_narration(leave_narration)
@@ -526,7 +581,7 @@ class ScenesoulRuntime:
         return {"status": "ok", "thought": None, "events": []}
 
     def get_status(self):
-        return {
+        status = {
             "scene": self.current_scene_name,
             "last_thought": getattr(self.brain, "last_thought", ""),
             "drives": dict(self.drives),
@@ -534,4 +589,23 @@ class ScenesoulRuntime:
             "memory_summary": self._build_recent_memory_summary(max_items=3),
             "world": self._get_world_objects_status(),
         }
+        if self.memory is not None and self.memory_enabled:
+            status["retrieved_memories"] = self.memory.status_payload()
+        else:
+            status["retrieved_memories"] = []
+        return status
+
+    def reset_memory(self, scope="all"):
+        if not self.memory_enabled:
+            return {"ok": False, "error": "memory_disabled"}
+        if self.memory is None:
+            return {"ok": False, "error": "memory_disabled"}
+        return self.memory.reset(scope)
+
+    def prune_memory(self, before_date):
+        if not self.memory_enabled:
+            return {"ok": False, "error": "memory_disabled"}
+        if self.memory is None:
+            return {"ok": False, "error": "memory_disabled"}
+        return self.memory.prune(before_date)
 

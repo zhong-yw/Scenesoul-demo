@@ -457,6 +457,45 @@
             overflow: hidden;
         }
 
+        /* v0.7: Retrieved Memories */
+        .collapsed-card > div:not(.panel-card-title) { display: none; }
+        .mem-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+            padding: 6px 0;
+            border-bottom: 1px solid var(--border);
+            font-size: 11px;
+            line-height: 1.5;
+        }
+        .mem-item:last-child { border-bottom: none; }
+        .mem-badge {
+            display: inline-block;
+            padding: 1px 6px;
+            border-radius: 3px;
+            font-size: 10px;
+            font-weight: 600;
+            flex-shrink: 0;
+            white-space: nowrap;
+        }
+        .mem-badge.brain { background: rgba(167,139,250,0.15); color: var(--accent-purple); }
+        .mem-badge.narrator { background: rgba(52,211,153,0.15); color: #34d399; }
+        .mem-badge.relationship { background: rgba(251,191,36,0.15); color: var(--accent-amber); }
+        .mem-badge.rollup { background: rgba(96,165,250,0.15); color: var(--accent-blue); }
+        .mem-badge.profilememory { background: rgba(251,113,133,0.15); color: var(--accent-rose); }
+        .mem-sig {
+            color: var(--text-muted);
+            font-variant-numeric: tabular-nums;
+            flex-shrink: 0;
+        }
+        .mem-content {
+            color: var(--text-secondary);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            min-width: 0;
+        }
+
         /* 状态指示 */
         .status-row {
             display: flex;
@@ -580,6 +619,17 @@
                         <span id="userPresentText">否</span>
                     </div>
                 </div>
+
+                <!-- v0.7: Retrieved Memories -->
+                <div class="panel-card" id="memoriesCard">
+                    <div class="panel-card-title" style="cursor:pointer" onclick="this.parentElement.classList.toggle('collapsed-card')">
+                        <span class="icon">◈</span> Retrieved Memories
+                        <span style="margin-left:auto;font-size:10px;color:var(--text-muted)" id="memCount"></span>
+                    </div>
+                    <div id="memoriesContainer">
+                        <div style="font-size:12px;color:var(--text-muted)">暂无检索命中</div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -693,6 +743,29 @@
             container.innerHTML = html;
         }
 
+        // v0.7: 渲染 Retrieved Memories
+        function renderMemories(memories) {
+            const container = document.getElementById('memoriesContainer');
+            const countEl = document.getElementById('memCount');
+            if (!memories || memories.length === 0) {
+                container.innerHTML = '<div style="font-size:12px;color:var(--text-muted)">暂无检索命中</div>';
+                countEl.textContent = '';
+                return;
+            }
+            countEl.textContent = memories.length;
+            container.innerHTML = memories.map((m) => {
+                const label = m.source_label || m.source || '?';
+                const badgeClass = (m.source || '').replace('_', '').toLowerCase();
+                const sig = m.significance ?? 0;
+                const content = escapeHtml((m.content || '').slice(0, 120));
+                return `<div class="mem-item">
+                    <span class="mem-badge ${badgeClass}">${escapeHtml(label)}</span>
+                    <span class="mem-sig">&lt;${sig}&gt;</span>
+                    <span class="mem-content">${content}</span>
+                </div>`;
+            }).join('');
+        }
+
         function renderWorldStatus(world) {
             const objectsEl = document.getElementById('worldObjects');
             const changesEl = document.getElementById('worldChanges');
@@ -760,6 +833,9 @@
             // 用户在场
             document.getElementById('userPresentText').textContent =
                 data.brain?.user_present ? '是' : '否';
+
+            // v0.7: Retrieved Memories
+            renderMemories(data.retrieved_memories);
         }
 
         // ── 发送消息 ──

@@ -3,6 +3,8 @@
 import json
 import os
 import sys
+from datetime import datetime, timedelta
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -192,3 +194,124 @@ def world_builder(tmp_path):
         wb.settings_path = str(settings_file)
         wb.settings = settings
         yield wb
+
+
+# ── v0.7 Memory Fixtures ──
+
+# MemoryConfig 的设计默认值（与 design.md 的环境变量表一致）。
+# 当 memory/config.py 尚未实现时，用 SimpleNamespace 提供等价字段，
+# 实现落地后 memory_cfg 会自动切换到真正的 MemoryConfig。
+_MEMORY_CONFIG_DEFAULTS = {
+    "enabled": True,
+    "lookback_days": 7,
+    "lookback_entries": 50,
+    "rollup_threshold": 200,
+    "significant_weight": 3,
+    "summary_max_chars": 2000,
+    "relationship_enabled": True,
+    "relevance_weight": 0.5,
+    "decay_halflife_days": 14.0,
+    "min_score": 5,
+}
+
+
+@pytest.fixture
+def memory_cfg():
+    """默认 MemoryConfig 实例（未实现时退化为等价 SimpleNamespace）。
+
+    使用方式：
+        def test_xxx(memory_cfg):
+            assert memory_cfg.lookback_days == 7
+
+    若测试需要覆盖字段，用 `dataclasses.replace` 或 SimpleNamespace 的属性赋值即可。
+    """
+    try:
+        from memory.config import MemoryConfig  # type: ignore
+        return MemoryConfig(**_MEMORY_CONFIG_DEFAULTS)
+    except Exception:
+        return SimpleNamespace(**_MEMORY_CONFIG_DEFAULTS)
+
+
+@pytest.fixture
+def tmp_profile_dir(tmp_path_factory):
+    """构造隔离的 memory 目录树，模拟单个 Profile 的持久化根目录。
+
+    目录结构：
+        <root>/memory/
+            brain_logs/
+            narrator_logs/
+            rollups/
+            relationships/
+            _archive/
+
+    返回一个 SimpleNamespace，暴露：
+        root          - tmp_path_factory 给出的根目录 (pathlib.Path)
+        memory_dir    - <root>/memory
+        brain_logs    - <root>/memory/brain_logs
+        narrator_logs - <root>/memory/narrator_logs
+        rollups       - <root>/memory/rollups
+        relationships - <root>/memory/relationships
+        archive       - <root>/memory/_archive
+    """
+    root = tmp_path_factory.mktemp("profile")
+    memory_dir = root / "memory"
+    subdirs = {
+        "brain_logs": memory_dir / "brain_logs",
+        "narrator_logs": memory_dir / "narrator_logs",
+        "rollups": memory_dir / "rollups",
+        "relationships": memory_dir / "relationships",
+        "archive": memory_dir / "_archive",
+    }
+    for path in subdirs.values():
+        path.mkdir(parents=True, exist_ok=True)
+    return SimpleNamespace(
+        root=root,
+        memory_dir=memory_dir,
+        **subdirs,
+    )
+
+
+@pytest.fixture
+def memory_paths(tmp_profile_dir):
+    """`tmp_profile_dir` 的 str 路径版视图，便于 patch 旧的模块级常量。
+
+    典型用法：
+        with patch("memory.memory_system.BRAIN_LOG_DIR", memory_paths["brain_logs"]):
+            ...
+    """
+    return {
+        "memory_dir": str(tmp_profile_dir.memory_dir),
+        "brain_logs": str(tmp_profile_dir.brain_logs),
+        "narrator_logs": str(tmp_profile_dir.narrator_logs),
+        "rollups": str(tmp_profile_dir.rollups),
+        "relationships": str(tmp_profile_dir.relationships),
+        "archive": str(tmp_profile_dir.archive),
+    }
+
+
+@pytest.fixture
+def freeze_now():
+    """可注入的 `now` 回调 fixture。
+
+    默认返回一个固定时间点 2026-05-04T12:00:00 的 callable；
+    测试可通过 `freeze_now.set(dt)` 或 `freeze_now.advance(days=1)` 调整当前时间，
+    然后将 `freeze_now` 直接作为 `now` 参数传给被测代码（`MemorySystem(..., now=freeze_now)` 等）。
+    """
+
+    class _FrozenClock:
+        def __init__(self, initial: datetime):
+            self._current = initial
+
+        def __call__(self) -> datetime:
+            return self._current
+
+        def set(self, dt: datetime) -> None:
+            self._current = dt
+
+        def advance(self, *, days: float = 0, hours: float = 0,
+                    minutes: float = 0, seconds: float = 0) -> None:
+            self._current = self._current + timedelta(
+                days=days, hours=hours, minutes=minutes, seconds=seconds
+            )
+
+    return _FrozenClock(datetime(2026, 5, 4, 12, 0, 0))

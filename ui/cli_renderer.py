@@ -323,12 +323,40 @@ class CliRenderer:
                     drives_text = " | ".join(f"{k} {v}" for k, v in drives.items())
                 else:
                     drives_text = "无"
-                self.write_output(
+
+                status_text = (
                     f"当前场景：{loop.current_scene_name}\n"
                     f"驱动力：{drives_text}\n"
-                    f"用户在线：{'是' if loop.user_present else '否'}",
-                    self.TYPE_SYSTEM, _DIM
+                    f"用户在线：{'是' if loop.user_present else '否'}"
                 )
+
+                # v0.7: 渲染 retrieved_memories
+                runtime = getattr(loop, "runtime", loop)
+                if hasattr(runtime, "get_status"):
+                    try:
+                        st = runtime.get_status()
+                        memories = st.get("retrieved_memories", [])
+                    except Exception:
+                        memories = []
+                else:
+                    memories = []
+
+                if memories:
+                    status_text += "\n\n【最近检索的记忆】"
+                    _SOURCE_LABELS = {
+                        "brain": "大脑", "narrator": "界说",
+                        "relationship": "关系", "rollup": "摘要",
+                        "profile_memory": "初始记忆",
+                    }
+                    for mem in memories:
+                        src = _SOURCE_LABELS.get(mem.get("source", ""), mem.get("source", ""))
+                        sig = mem.get("significance", 0)
+                        content = mem.get("content", "")[:120]
+                        status_text += f"\n  [{src}/{mem.get('type', '')}] <{sig}> {content}"
+                else:
+                    status_text += "\n\n【最近检索的记忆】\n  （本回合无检索命中）"
+
+                self.write_output(status_text, self.TYPE_SYSTEM, _DIM)
             else:
                 self.write_output("状态信息暂不可用。", self.TYPE_SYSTEM, _DIM)
         except Exception:

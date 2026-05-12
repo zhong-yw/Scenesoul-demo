@@ -96,6 +96,17 @@ def api_status():
         return jsonify({"error": "未初始化"})
 
     status = runtime.get_status()
+
+    # v0.7: 为 retrieved_memories 补充 source_label
+    _SOURCE_LABELS = {
+        "brain": "Brain", "narrator": "Narrator",
+        "relationship": "Relationship", "rollup": "Rollup",
+        "profile_memory": "ProfileMemory",
+    }
+    memories = status.get("retrieved_memories", [])
+    for mem in memories:
+        mem["source_label"] = _SOURCE_LABELS.get(mem.get("source", ""), mem.get("source", ""))
+
     return jsonify({
         "brain": {
             "scene": status["scene"],
@@ -109,6 +120,7 @@ def api_status():
         },
         "world": status.get("world", {"scene": status["scene"], "objects": [], "recent_changes": [], "version": 0}),
         "conversation": conversation_log[-20:],
+        "retrieved_memories": memories,
     })
 
 

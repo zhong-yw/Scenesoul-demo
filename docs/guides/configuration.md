@@ -20,6 +20,15 @@
 | `THINK_INTERVAL` | `10` | Runtime 空闲思考间隔（秒） |
 | `USER_TIMEOUT` | `600` | 判定用户离场超时（秒） |
 | `MEMORY_ENABLED` | `1` | 是否启用记忆落盘与启动恢复（`0/false` 关闭） |
+| `MEMORY_LOOKBACK_DAYS` | `7` | 跨日检索窗口（天），取值范围 `[1, 30]` |
+| `MEMORY_LOOKBACK_ENTRIES` | `50` | 单次检索候选上限，取值范围 `[10, 500]` |
+| `MEMORY_ROLLUP_THRESHOLD` | `200` | 某日日志条数超出此值时生成 SummaryRollup |
+| `MEMORY_SIGNIFICANT_WEIGHT` | `3` | `weight >=` 此值的条目跨 LookBackWindow 始终保留 |
+| `MEMORY_SUMMARY_MAX_CHARS` | `2000` | 每个视图的 RecentMemorySummary 字符上限 |
+| `MEMORY_RELATIONSHIP_ENABLED` | `1` | RelationshipStore 读写开关（`0/false` 关闭） |
+| `MEMORY_RELEVANCE_WEIGHT` | `0.5` | 检索排序中相关度权重（`0.0–1.0`），significance 权重为 `1 - 此值` |
+| `MEMORY_DECAY_HALFLIFE_DAYS` | `14.0` | DecayPolicy 半衰期（天），`> 0` |
+| `MEMORY_MIN_SCORE` | `5` | 低于此分且超窗的条目并入 Rollup 聚合，取值范围 `[0, 100]` |
 | `WORLD_PRESET` | `default` | 未显式传参时的预设回退 |
 
 ### `.env` 完整模板
@@ -34,6 +43,17 @@ OPENAI_MODEL=ds-flash
 THINK_INTERVAL=10
 USER_TIMEOUT=600
 MEMORY_ENABLED=1
+
+# ===== v0.7 记忆连续性配置（可选）=====
+MEMORY_LOOKBACK_DAYS=7
+MEMORY_LOOKBACK_ENTRIES=50
+MEMORY_ROLLUP_THRESHOLD=200
+MEMORY_SIGNIFICANT_WEIGHT=3
+MEMORY_SUMMARY_MAX_CHARS=2000
+MEMORY_RELATIONSHIP_ENABLED=1
+MEMORY_RELEVANCE_WEIGHT=0.5
+MEMORY_DECAY_HALFLIFE_DAYS=14.0
+MEMORY_MIN_SCORE=5
 
 # ===== 预设回退（可选）=====
 WORLD_PRESET=default
@@ -57,6 +77,16 @@ python main.py --web
 python main.py --web --host 127.0.0.1 --port 5001
 python main.py --web --preset bedroom_warm --debug
 ```
+
+## 记忆降级路径
+
+| 触发条件 | 降级行为 | 影响范围 |
+|---|---|---|
+| `MEMORY_ENABLED=0` | 跳过所有记忆写入/读取 | summary 为空、inspector 为空、reset/prune 返回错误 |
+| `MEMORY_RELATIONSHIP_ENABLED=0` | 关系读写 no-op，Brain summary 仅含事件；PII 仍做 redact | Brain 不含关系字段 |
+| 配置项越界 / 不可解析 | 回退默认值 + WARNING 日志 | 使用默认参数运行 |
+| JSONL 行损坏 | Codec 跳过 + WARNING | 候选集合少若干条 |
+| OSError（写入失败） | 当前事件不写盘；ERROR 日志 | 丢失该事件；运行继续 |
 
 ## 预设（profiles）
 

@@ -26,10 +26,62 @@ TRIM_TARGET = 16_000
 MIN_ROUNDS = 2
 
 
+_MEMORY_SUMMARY_HARD_LIMIT = 4000  # 2 * MEMORY_SUMMARY_MAX_CHARS 的双保险
+
+
+def _tool_call_unit_size(messages, assistant_idx):
+    """计算从 assistant_idx 开始的 tool_call 原子单元大小。
+
+    包括 assistant 消息本身 + 所有紧随其后且 tool_call_id 匹配的 tool 消息。
+    """
+    assistant_msg = messages[assistant_idx]
+    tool_call_ids = {tc["id"] for tc in assistant_msg.get("tool_calls", [])}
+    size = 1
+    idx = assistant_idx + 1
+    while idx < len(messages):
+        msg = messages[idx]
+        if msg.get("role") == "tool" and msg.get("tool_call_id") in tool_call_ids:
+            size += 1
+            idx += 1
+        else:
+            break
+    return size
+
+
+def _trim_messages(messages):
+    """裁剪消息列表至目标 token 预算，保护 tool_call 配对完整性。"""
+    if not messages or _estimate_messages_tokens(messages) <= TOKEN_BUDGET:
+        return
+    max_keep = MIN_ROUNDS * 2
+    while len(messages) > 1 + max_keep and _estimate_messages_tokens(messages) > TRIM_TARGET:
+        removable_end = len(messages) - max_keep
+        removed = False
+        for i in range(1, removable_end):
+            msg = messages[i]
+            # tool_call assistant 消息：作为原子单元移除
+            if msg.get("role") == "assistant" and msg.get("tool_calls"):
+                unit_size = _tool_call_unit_size(messages, i)
+                del messages[i:i + unit_size]
+                removed = True
+                break
+            # tool role 消息：跳过（它属于前面的 assistant）
+            if msg.get("role") == "tool":
+                continue
+            # 普通消息：直接移除
+            del messages[i]
+            removed = True
+            break
+        if not removed:
+            break
+
+
 def _append_memory_summary(system_content, memory_summary):
     summary = (memory_summary or "").strip()
     if not summary:
         return system_content
+    # 字符级硬上限：防止异常长摘要吞掉整个 token 预算
+    if len(summary) > _MEMORY_SUMMARY_HARD_LIMIT:
+        summary = summary[:_MEMORY_SUMMARY_HARD_LIMIT]
     return f"{system_content}\n\n【近期记忆摘要】\n{summary}"
 
 
@@ -150,12 +202,7 @@ class BrainContextBuilder:
             return "（暂无场景）"
 
     def _trim_messages(self, messages):
-        """裁剪消息列表至目标 token 预算"""
-        if not messages or _estimate_messages_tokens(messages) <= TOKEN_BUDGET:
-            return
-        max_keep = MIN_ROUNDS * 2
-        while len(messages) > 1 + max_keep and _estimate_messages_tokens(messages) > TRIM_TARGET:
-            del messages[1:3]
+        _trim_messages(messages)
 
 
 # ── Narrator Context Builder ──
@@ -202,12 +249,7 @@ class NarratorContextBuilder:
         return context
 
     def _trim_messages(self, messages):
-        """裁剪消息列表至目标 token 预算"""
-        if not messages or _estimate_messages_tokens(messages) <= TOKEN_BUDGET:
-            return
-        max_keep = MIN_ROUNDS * 2
-        while len(messages) > 1 + max_keep and _estimate_messages_tokens(messages) > TRIM_TARGET:
-            del messages[1:3]
+        _trim_messages(messages)
 
 
 # ── 状态拼接工具 ──
